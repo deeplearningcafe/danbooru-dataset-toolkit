@@ -1,0 +1,16 @@
+__pycache__/
+.ipynb_checkpoints/
+latents/
+*.csv
+*.json
+aesthetic/
+wd_swinv2/
+tokenizer/
+*.xlsx
+*.txt
+todo
+!requirements.txt
+!LICENSE.txt
+ignore/
+*yaml
+!configs/default_config.yaml

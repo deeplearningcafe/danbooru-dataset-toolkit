@@ -1,0 +1,103 @@
+# --- Global Paths ---
+data_root: /StableDifussion/
+parquet_path: /danbooru/parquets
+download_dir: "/danbooru_dataset"
+models_dir: "models/"
+device: "cuda"
+num_parquets: 1
+debug_tags_csv: "debug_tags.csv"
+
+# --- Dataset Creation ---
+prior_data:
+    knowledge_bases_paths: ["artists.txt", "characters.xlsx"]
+    output_csv_path: "prior_knowledge.csv"
+    max_workers: 6
+    batch_size: 50
+
+# --- Sampling Parameters ---
+sampling:
+    total_samples: 1000000
+    random_seed: 46
+    sampled_ids_csv: "sampled_ids_prior.csv"
+    quality_distribution:
+        masterpiece: 0.20
+        good_score: 0.40
+        bad_score: 0.30
+        worse_score: 0.10
+    rating_distribution:
+        g: 0.20
+        s: 0.35
+        q: 0.30
+        e: 0.15
+    skip_tags:
+        comic: 0.8
+        speech_bubble: 0.6
+        dialogue_box: 0.7
+        furry: 0.5
+        multiple views: 0.4
+
+    include_tags:
+        highres: 2.0
+        absurdres: 2.0
+        official_art: 2.0
+        novel_illustration: 2.0
+        official_art: 2.0
+        official_wallpaper: 2.0
+        souryuu_asuka_langley: 8.0
+        neon_genesis_evangelion: 4.5
+        k-on!: 4.5
+
+    character_list: []
+
+# --- Download Parameters ---
+download:
+    max_workers: 8
+    timeout: 7
+    max_downloads: 75000
+    start_index: 0
+    exclusion_list_csv: "exclude_ids.csv"
+
+# --- Deduplication Parameters ---
+deduplication:
+    output_dir: "/deduplication"
+    max_workers: 14
+    threshold: 5
+    batch_size: 1024
+
+# --- Classification Parameters ---
+classification:
+    feature_extractor_path: "models/wd_swinv2"
+    classifier_path: "aesthetic/latents/aesthetic_classifier.pth"
+    batch_size: 32
+    aesthetic_labels_csv: "image_aesthetic_labels.csv"
+
+# --- Prompt Generation Parameters ---
+prompts:
+    artists_txt: "artists.txt"
+    tokenizer_path: "models/tokenizer"
+    characters_txt: "characters.xlsx"
+    final_tiers_csv: "final_tiers.csv"
+
+# --- Prompt Upsampling ---
+prompt_upsampling:
+    tagger_model_dir: "models/wd_swinv2"
+    upsampled_tags_path: "upsampled_tags.csv"
+    tag_threshold: 0.35
+
+# --- Latent Encoding Parameters ---
+latent_encoding:
+    latents_output_dir: "latents/"
+    label_ext: ".json"
+    already_tokenized: true
+    # Model paths are relative to the project root
+    vae_path: "/models/vae/diffusion_pytorch_model.safetensors"
+    clip_path: "/models/clip/model.safetensors"
+    # Encoding and performance settings
+    samples_per_shard: 20000
+    batch_size: 4
+    num_workers: 12
+    length_tiers: [77, 152, 227]
+    h5_compression: "gzip"
+    cache_text_embeds: false
+    store_tokenized_captions: true
+    min_sample_count: 8
