@@ -2,6 +2,7 @@ import torch
 from src.prompts.tagger import Tagger
 from src.core.prompt_upsampler import TaggerDataset, combine_prompts_intelligently,custom_collate_with_paths
 from aesthetic.aesthetic import AestheticClassifier
+from ..prompts.prompt_utils import validate_upsampled_batch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import logging
@@ -58,7 +59,7 @@ def unified_aes_upsampler(
     )
     # Adjust state dict keys if they have the '_orig_mod.' prefix
     adjusted_state_dict = {
-        k.replace('_orig_mod.', ''): v 
+        k.replace('_orig_mod.', ''): v
         for k, v in ckpt['model_state_dict'].items()
     }
     aesthetic_classifier.load_state_dict(adjusted_state_dict)
@@ -74,7 +75,7 @@ def unified_aes_upsampler(
         tagger_means=tagger.expected_processor_config["image_mean"],
         tagger_stds=tagger.expected_processor_config["image_std"],
     )
-    
+
     loader_kwargs = {
         'batch_size': batch_size,
         'shuffle': False,
@@ -100,15 +101,16 @@ def unified_aes_upsampler(
         if batch is None:
             skipped_batches += 1
             continue
-        
-        image_tensors, prompts, img_paths = batch
+
+        # Unpack batch - custom_collate_with_paths yields (tensor, [prompt], [path], [metadata])
+        image_tensors, prompts, img_paths, metadata_batch = batch
         image_tensors = image_tensors.to(device)
 
         with torch.no_grad():
             # --- SINGLE FORWARD PASS ---
             # 1. Compute features once (most expensive step)
             features = feature_extractor.forward_features(image_tensors)
-            
+
             # 2. Get pooled features for both tasks
             pooled_features = feature_extractor.head.global_pool(
                 features
@@ -117,7 +119,7 @@ def unified_aes_upsampler(
             # --- Path 1: Aesthetic Classification ---
             aesthetic_logits = aesthetic_classifier(pooled_features)
             predictions = torch.argmax(aesthetic_logits, dim=1)
-            
+
             # --- Path 2: Prompt Upsampling ---
             # Continue the forward pass for the tagger using pooled features
             tagger_logits = feature_extractor.head.fc(
@@ -129,7 +131,8 @@ def unified_aes_upsampler(
         # 4. Process and store results for the batch
         for i in range(len(prompts)):
             img_path = img_paths[i]
-            
+            row_metadata = metadata_batch[i]
+
             # Store classification result
             label = idx2label[predictions[i].item()]
             # just with the ID is enough
@@ -148,6 +151,13 @@ def unified_aes_upsampler(
             _, upsampled_tags = combine_prompts_intelligently(
                 original_prompt, new_tags
             )
+
+            # Validate and clean the upsampled tags using metadata and heuristics
+            upsampled_tags = validate_upsampled_batch(
+                upsampled_tags,
+                row_metadata
+            )
+
             upsampling_results.append({
                 "id": img_path.stem,
                 "upsampled_tags": upsampled_tags
@@ -177,11 +187,11 @@ def unified_aes_upsampler(
     )
     print(f"Classification results saved to "
             f"{aesthetic_labels_csv}")
-    
+
     pd.DataFrame(upsampling_results).to_csv(
         upsampled_tags_path, index=False
     )
     print(f"Upsampling results saved to "
             f"{upsampled_tags_path}")
-    
+
     print("Unified processing complete.")

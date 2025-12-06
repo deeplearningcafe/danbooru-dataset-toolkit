@@ -30,6 +30,7 @@ from vae import Vae, VaeConfig
 from clip import Clip, ClipConfig
 from transformers import CLIPTokenizer
 import torch
+import numpy as np
 
 class DataPipeline:
     """
@@ -40,6 +41,11 @@ class DataPipeline:
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         print("Configuration loaded.")
+        # set seeds
+        torch.manual_seed(self.config['sampling']['random_seed'])
+        random.seed(self.config['sampling']['random_seed'])
+        np.random.seed(self.config['sampling']['random_seed'])
+        print(f"Seed used {self.config['sampling']['random_seed']}")
 
     def run_generate_dataset(self):
         """Creates a parquet file with all the samples from the characters and artists lists."""

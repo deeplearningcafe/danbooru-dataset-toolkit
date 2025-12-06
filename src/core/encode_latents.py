@@ -42,10 +42,6 @@ sys.path.insert(0, common_parent_dir)
 from clip import Clip, ClipConfig
 from vae import Vae, VaeConfig
 
-
-random.seed(46)
-np.random.seed(46)
-
 # Define type hints for clarity
 Resolution = Tuple[int, int]
 AESTHETIC_LABEL = {"worse_score": 0, "bad_score": 1, "good_score": 2, "masterpiece": 3}

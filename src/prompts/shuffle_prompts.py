@@ -1,5 +1,4 @@
 import random
-random.seed(42)
 # Define constants for special token IDs for clarity and maintainability.
 # These correspond to the CLIP tokenizer used in Stable Diffusion.
 START_OF_TEXT_ID = 49406

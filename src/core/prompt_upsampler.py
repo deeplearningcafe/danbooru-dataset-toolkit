@@ -18,15 +18,13 @@ from transformers.image_transforms import (
 import random
 from src.prompts.tagger import Tagger, resize_with_padding
 from ..utils.loader import load_all_parquets, parallel_scan_images
+from ..prompts.prompt_utils import validate_upsampled_batch
 
 import logging
 import sys
 import argparse
 import re
 import pandas as pd
-torch.manual_seed(46)
-random.seed(46)
-np.random.seed(46)
 
 # Set up logging
 logging.basicConfig(
@@ -146,13 +144,21 @@ class TaggerDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Optional[Tuple[torch.Tensor, str, Path]]:
         """
-        Returns (tagger_image_tensor, prompt, img_path) or None on error.
+        Returns (tagger_image_tensor, prompt, img_path, metadata_dict) or None on error.
         """
         if idx >= self.__len__():
             raise IndexError("Dataset index out of range.")
 
         img_path = self.image_paths[idx]
         prompt = ""
+
+        # Metadata dictionary to pass to validation
+        metadata = {
+            'tag_string_general': '',
+            'tag_count_character': None,
+            'original_prompt': ''
+        }
+
         try:
             # Attempt to read the corresponding prompt file
             prompt_path = img_path.with_suffix(self.label_ext)
@@ -160,14 +166,25 @@ class TaggerDataset(Dataset):
                 with prompt_path.open("r", encoding='utf-8') as f:
                     prompt = f.read().strip()
             elif self.booru_df is not None:
-                id = int(os.path.splitext(os.path.basename(img_path))[0])
-                prompt = self.booru_df[self.booru_df['id'] == id]['tag_string'].iloc[0]
+                try:
+                    # Assuming filename is ID
+                    img_id = int(os.path.splitext(os.path.basename(img_path))[0])
+                    row = self.booru_df[self.booru_df['id'] == img_id]
+                    if not row.empty:
+                        prompt = row['tag_string'].iloc[0]
+                        # Populate metadata for validation
+                        metadata['tag_string_general'] = row.get('tag_string_general', pd.Series([''])).iloc[0]
+                        metadata['tag_count_character'] = row.get('tag_count_character', pd.Series([None])).iloc[0]
+                except Exception:
+                    pass # Fallback to file reading
             else:
                 logger.warning(f"Prompt file not found for {img_path}, using empty prompt.")
 
         except Exception as e:
             logger.warning(f"Error reading prompt file {prompt_path}: {e}. Using empty prompt.")
             prompt = "" # Use empty prompt on error
+
+        metadata['original_prompt'] = prompt
 
         # Construct full image path if global_path is set
         img_path_open = img_path
@@ -188,8 +205,8 @@ class TaggerDataset(Dataset):
             # Preprocess the image specifically for the tagger
             image_tensor = self._preprocess_for_tagger(image)
 
-            # Return tensor, original prompt, and original relative path
-            return image_tensor, prompt, img_path
+            # Return tensor, original prompt, original relative path and metadata and metadata
+            return image_tensor, prompt, img_path, metadata
 
         except (IOError, OSError, Image.DecompressionBombError) as e:
             logger.warning(f"Error loading/processing image {img_path_open}: {e}. Skipping.")
@@ -244,6 +261,7 @@ def custom_collate_with_paths(
         image_tensors = components[0] # Tuple of tensors
         prompts = components[1]       # Tuple of strings
         img_paths = components[2]     # Tuple of Path objects
+        metadata = components[3]      # Tuple of Dicts
 
         # Collate tensors using default_collate:
         # This stacks the individual tensors into a single batch tensor.
@@ -254,9 +272,10 @@ def custom_collate_with_paths(
         # is the standard way to batch non-tensor data.
         collated_prompts = list(prompts)
         collated_paths = list(img_paths)
+        collated_metadata = list(metadata)
 
         # Return the collated batch in the desired structure
-        return collated_tensors, collated_prompts, collated_paths
+        return collated_tensors, collated_prompts, collated_paths, collated_metadata
 
     except Exception as e:
         # Catch potential errors during the separation or collation process.
@@ -340,7 +359,7 @@ def combine_prompts_intelligently(
 
 
 def upsample_prompts_batch(
-    dataset_root: str, # Changed from dataset object to root path
+    dataset_root: str,
     tagger_model_path: str,
     output_csv_path: str,
     tagger_device: str = 'cuda',
@@ -351,8 +370,8 @@ def upsample_prompts_batch(
     dataloader_prefetch_factor: Optional[int] = 2,
     dataloader_persistent_workers: bool = True,
     save_original_on_error: bool = False,
-    global_path: Optional[str] = None, # Pass global_path to dataset
-    label_ext: str = ".txt", # Pass label_ext to dataset
+    global_path: Optional[str] = None,
+    label_ext: str = ".txt",
     skip_rating: bool = False,
     booru_df_path: Optional[str] = None,
 ):
@@ -456,12 +475,12 @@ def upsample_prompts_batch(
             error_count += batch_size # Estimate errors for the skipped batch
             continue
 
-        # Unpack batch - custom_collate_with_paths yields (tensor, [prompt], [path])
+        # Unpack batch - custom_collate_with_paths yields (tensor, [prompt], [path], [metadata])
         try:
             # The first element is the batch of preprocessed tensors
             # The second is a list of original prompts (strings)
             # The third is a list of Path objects
-            image_tensors, prompts, img_paths = batch
+            image_tensors, prompts, img_paths, metadata_batch = batch
             # img_paths are already Path objects from the custom collate function
         except (ValueError, TypeError) as e:
             logger.error(f"Error unpacking batch: {e}. Skipping batch.")
@@ -501,6 +520,8 @@ def upsample_prompts_batch(
         for i in range(len(prompts)):
             original_prompt = prompts[i]
             img_path = img_paths[i]
+            row_metadata = metadata_batch[i]
+
             # Get scores for the current image from the batch results
             image_scores = batch_scores_np[i]
 
@@ -521,6 +542,13 @@ def upsample_prompts_batch(
 
             final_prompt, upsampled_tags = combine_prompts_intelligently(
                 original_prompt, new_tags
+            )
+
+            # Validate and clean the upsampled tags using metadata and heuristics
+            # This filters out hallucinations (e.g. extra hair colors, conflicting clothes)
+            upsampled_tags = validate_upsampled_batch(
+                upsampled_tags,
+                row_metadata
             )
 
             results.append({

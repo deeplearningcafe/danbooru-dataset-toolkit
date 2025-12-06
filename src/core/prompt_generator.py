@@ -14,6 +14,7 @@ from ..prompts.prompt_utils import (
     extract_and_remove_person_tags,
     META_TAGS_TO_INCLUDE,
     RATINGS,
+    QUALITY_TIER_AES,
     count_tags)
 from ..prompts.shuffle_prompts import split_upsampled_tags
 from pathlib import Path
@@ -656,6 +657,15 @@ class PromptGenerator:
 
         # 6. Score Range Based Rating (Aesthetic Class + Meta Tags)
         aesthetic_class = format_tag_string(row.get('final_tier', 'unknown_tier'))
+        # we will keep the nai-v2 quality tags with 50% prob
+        # as we won't shuffle the aes tags it is better to uncondition some times
+        choice = random.choice([0, 1])
+        if choice:
+            nai_quality_tags = QUALITY_TIER_AES.get(aesthetic_class)
+            aesthetic_class += ", " + random.choice(nai_quality_tags[:-1])
+            # the last tag is the aesthetic
+            aesthetic_class += ", " + nai_quality_tags[-1]
+
         meta_tags_raw = row.get('tag_string_meta', '')
         if pd.notna(meta_tags_raw):
             # Meta tags are also formatted for consistency.
