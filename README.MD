@@ -92,13 +92,13 @@ All commands are run from your terminal.
 4.  **Deduplicate Images**
     Finds and moves visually similar images to a separate folder for review.
     ```bash
-    python main.py deduplicate --config-path configs/my_dataset_config.yaml
+    python main.py deduplicate --config-path configs/my_dataset_config.yaml --automatic-check
     ```
 
 5.  **Classify & Upsample Prompts**
     Runs a unified process to get aesthetic scores and upsample tags for all downloaded images, saving results to CSV files. **First we need to create the prompt files from the dataset**, both arguments are False by default so you can omitt them.
     ```bash
-    python main.py generate-prompts --config-path configs/my_dataset_config.yaml --create-json False --use-aesthetic False
+    python main.py generate-prompts --config-path configs/my_dataset_config.yaml --no-create-json --no-use-aesthetic
     python main.py unified-aes-prompts --config-path configs/my_dataset_config.yaml
     ```
     As this step uses the gpu, the processing can take quite a lot of time for old gpus. For reference on a gtx 1660 super the maximum batch size is 32, and it takes around 6 hours for 200K samples.
@@ -106,7 +106,7 @@ All commands are run from your terminal.
 6.  **Generate Final Prompt Files**
     Combines all metadata (original tags, upsampled tags, aesthetic scores) and creates the final `.json` caption files for each image.
     ```bash
-    python main.py generate-prompts --config-path configs/my_dataset_config.yaml --create-json True --use-aesthetic True
+    python main.py generate-prompts --config-path configs/my_dataset_config.yaml --create-json --use-aesthetic
     ```
 
 7.  **Encode Latents into H5**
@@ -129,6 +129,25 @@ To run the entire pipeline from sampling to latent encoding sequentially, use th
 ```bash
 python main.py full-pipeline --config-path configs/my_dataset_config.yaml
 ```
+### Anime faces cropping
+
+All commands are run from your terminal.
+
+1.  **Generate Faces Dataset from already downloaded illustrations**
+    This step processes your downloaded images to generate only faces dataset.
+    ```bash
+    python main.py crop-faces --config-path configs/default_config.yaml --from-downloaded
+    ```
+2.  **Generate prompts by upsampling them**
+    Instead of using the original prompts, upsample them.
+    ```bash
+    python main.py upsample-prompts --config-path configs/default_config.yaml --anime-faces
+    ```
+3.  **Merge upsampled prompts**
+    Merges the `id_upsampled.txt` file to the `id.txt` file and deletes the upsampled one leaving only the `id.txt`
+    ```bash
+    python aux_scripts/merge_upsampled_tags.py
+    ```
 
 ## Configuration
 

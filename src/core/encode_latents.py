@@ -15,11 +15,12 @@ import h5py
 import json
 from collections import defaultdict
 import math
-import gc # For garbage collection if needed
+import gc  # For garbage collection if needed
 import pandas as pd
 from ..utils.loader import parallel_scan_images
 
 import sys
+
 sys.path.append("..")
 
 import os
@@ -34,7 +35,7 @@ current_dir = os.path.dirname(current_file_path)
 common_parent_dir = os.path.dirname(os.path.dirname(current_dir))
 
 # Construct the path to folder_A
-folder_A_path = os.path.join(common_parent_dir, 'models')
+folder_A_path = os.path.join(common_parent_dir, "models")
 print(folder_A_path)
 # Add folder_A's path to sys.path
 sys.path.insert(0, folder_A_path)
@@ -46,7 +47,10 @@ from vae import Vae, VaeConfig
 Resolution = Tuple[int, int]
 AESTHETIC_LABEL = {"worse_score": 0, "bad_score": 1, "good_score": 2, "masterpiece": 3}
 
-def process_image(path: Path, label_ext: str = ".txt") -> Tuple[Path, Tuple[int, int], Optional[Exception]]:
+
+def process_image(
+    path: Path, label_ext: str = ".txt"
+) -> Tuple[Path, Tuple[int, int], Optional[Exception]]:
     """
     Try to open an image, check for a non-empty prompt file (.txt or .json),
     and return its dimensions or an appropriate error.
@@ -61,8 +65,10 @@ def process_image(path: Path, label_ext: str = ".txt") -> Tuple[Path, Tuple[int,
 
     if not prompt_exists:
         # Return a specific, informative error if no valid prompt is found.
-        return path, None, FileNotFoundError(
-            f"Prompt not found or is empty for {path.name}"
+        return (
+            path,
+            None,
+            FileNotFoundError(f"Prompt not found or is empty for {path.name}"),
         )
 
     # If a prompt exists, proceed to open and validate the image file.
@@ -73,12 +79,9 @@ def process_image(path: Path, label_ext: str = ".txt") -> Tuple[Path, Tuple[int,
     except Exception as e:
         return path, None, e
 
+
 def encode_text_batch(
-    prompts: List[str],
-    text_encoder,
-    tokenizer,
-    max_length: int,
-    device: str = "cpu"
+    prompts: List[str], text_encoder, tokenizer, max_length: int, device: str = "cpu"
 ) -> torch.Tensor:
     """
     Encodes a batch of text prompts using tokenizer and text encoder.
@@ -110,23 +113,24 @@ def encode_text_batch(
     if input_ids.shape[-1] > tokenizer_max_length:
         processed_ids = []
         # Process each prompt's IDs individually for chunking logic
-        for iids_single in input_ids: # Iterate over batch dimension
+        for iids_single in input_ids:  # Iterate over batch dimension
             z = []
             # Chunk the single prompt's IDs
             for i in range(
-                1, max_length - tokenizer_max_length + 2,
-                tokenizer_max_length - 2
+                1, max_length - tokenizer_max_length + 2, tokenizer_max_length - 2
             ):
                 ids_chunk = (
                     iids_single[0].unsqueeze(0),  # BOS
-                    iids_single[i:i + tokenizer_max_length - 2],
+                    iids_single[i : i + tokenizer_max_length - 2],
                     iids_single[-1].unsqueeze(0),  # PAD or EOS
                 )
                 ids_chunk = torch.cat(ids_chunk)
 
                 # Fix special tokens at chunk boundaries
-                if (ids_chunk[-2] != tokenizer.eos_token_id and
-                        ids_chunk[-2] != tokenizer.pad_token_id):
+                if (
+                    ids_chunk[-2] != tokenizer.eos_token_id
+                    and ids_chunk[-2] != tokenizer.pad_token_id
+                ):
                     ids_chunk[-1] = tokenizer.eos_token_id
                 if ids_chunk[1] == tokenizer.pad_token_id:
                     ids_chunk[1] = tokenizer.eos_token_id
@@ -139,22 +143,18 @@ def encode_text_batch(
 
         batch_size = processed_ids.size(0)
         # Reshape for encoder [B*num_chunks, 77]
-        input_ids_for_encoder = processed_ids.reshape(
-            (-1, tokenizer_max_length)
-        )
+        input_ids_for_encoder = processed_ids.reshape((-1, tokenizer_max_length))
     else:
         # No chunking needed, use original input_ids
         input_ids_for_encoder = input_ids
-        batch_size = input_ids.size(0) # Get batch size
+        batch_size = input_ids.size(0)  # Get batch size
 
     # Encode the batch
     with torch.no_grad():
         # Ensure input is on the correct device
-        encoder_output = text_encoder(
-            input_ids_for_encoder.to(device)
-        )
+        encoder_output = text_encoder(input_ids_for_encoder.to(device))
         # Typically use the penultimate layer output
-        text_embeddings = encoder_output[-1][-2] # Check model output structure
+        text_embeddings = encoder_output[-1][-2]  # Check model output structure
 
     # Reshape and concatenate if chunking was done
     if input_ids.shape[-1] > tokenizer_max_length:
@@ -167,9 +167,7 @@ def encode_text_batch(
         states_list = [text_embeddings[:, 0].unsqueeze(1)]  # Keep <BOS>
         for i in range(1, max_length, tokenizer_max_length):
             # Add content tokens from each chunk
-            states_list.append(
-                text_embeddings[:, i: i + tokenizer_max_length - 2]
-            )
+            states_list.append(text_embeddings[:, i : i + tokenizer_max_length - 2])
         # Keep final <EOS> (or whatever is at the end)
         states_list.append(text_embeddings[:, -1].unsqueeze(1))
         text_embeddings = torch.cat(states_list, dim=1)
@@ -180,7 +178,8 @@ def encode_text_batch(
     # Else (no chunking), embeddings are already [B, 77, embed_dim]
     # or [B, max_length, embed_dim] if max_length <= 77
 
-    return text_embeddings # Shape: [B, seq_len, embed_dim]
+    return text_embeddings  # Shape: [B, seq_len, embed_dim]
+
 
 def tokenize_text_batch(prompts, tokenizer, max_length=77):
     """
@@ -199,7 +198,7 @@ def tokenize_text_batch(prompts, tokenizer, max_length=77):
         padding="max_length",
         max_length=max_length,
         truncation=True,
-        return_tensors="np"
+        return_tensors="np",
     )
 
     return tokens.input_ids  # Shape: [batch_size, max_length]
@@ -213,15 +212,15 @@ class LatentEncodingDataset(Dataset):
     """
 
     def __init__(
-            self,
-            root: str | Path,
-            dtype=torch.float32,
-            max_log_ar_diff: float = 0.3,
-            label_ext: str = ".txt",
-            transform=None,
-            df_tokens_path: str = None,
-            already_tokenized: bool = False,
-            ):
+        self,
+        root: str | Path,
+        dtype=torch.float32,
+        max_log_ar_diff: float = 0.3,
+        label_ext: str = ".txt",
+        transform=None,
+        df_tokens_path: str = None,
+        already_tokenized: bool = False,
+    ):
         self.root = Path(root)
         self.dtype = dtype
         self.max_log_ar_diff = max_log_ar_diff
@@ -230,11 +229,14 @@ class LatentEncodingDataset(Dataset):
         if transform is None:
             # Define a default transform if none provided
             from torchvision.transforms import v2
-            self.transform = v2.Compose([
-                v2.PILToTensor(),
-                v2.ToDtype(dtype, scale=True),
-                v2.Normalize([0.5], [0.5]),
-            ])
+
+            self.transform = v2.Compose(
+                [
+                    v2.PILToTensor(),
+                    v2.ToDtype(dtype, scale=True),
+                    v2.Normalize([0.5], [0.5]),
+                ]
+            )
             print("Using default transform.")
         else:
             self.transform = transform
@@ -246,23 +248,25 @@ class LatentEncodingDataset(Dataset):
                 # CHANGED: Force the 'id' column to be read as a string.
                 # This ensures the index type matches the string-based
                 # 'img_id' used for lookups, preventing KeyErrors.
-                df = pd.read_csv(df_tokens_path, dtype={'id': str})
-                self.df_tokens = df.set_index('id')
-                print(f"Successfully loaded {len(self.df_tokens)} "
-                      "token delimiter entries.")
+                df = pd.read_csv(df_tokens_path, dtype={"id": str})
+                self.df_tokens = df.set_index("id")
+                print(
+                    f"Successfully loaded {len(self.df_tokens)} "
+                    "token delimiter entries."
+                )
             except FileNotFoundError:
-                print(f"Warning: Token delimiter file not found at "
-                      f"{df_tokens_path}. Proceeding without it.")
+                print(
+                    f"Warning: Token delimiter file not found at "
+                    f"{df_tokens_path}. Proceeding without it."
+                )
             except Exception as e:
-                print(f"Warning: Failed to load or process token delimiter "
-                      f"file: {e}. Proceeding without it.")
+                print(
+                    f"Warning: Failed to load or process token delimiter "
+                    f"file: {e}. Proceeding without it."
+                )
         self.already_tokenized = already_tokenized
 
-        (
-            self.paths,
-            _raw_res,
-            self.booru_id_to_idx
-        ) = self._filter_valid_images(
+        (self.paths, _raw_res, self.booru_id_to_idx) = self._filter_valid_images(
             Path(root), num_workers=4
         )
 
@@ -274,7 +278,7 @@ class LatentEncodingDataset(Dataset):
 
         max_res_area = (768, 512)
 
-        max_dim_limit = 1024 # Absolute max dimension
+        max_dim_limit = 1024  # Absolute max dimension
         min_size = 256
         divisible = 64
         base_res = (512, 512)
@@ -286,7 +290,7 @@ class LatentEncodingDataset(Dataset):
             divisible=divisible,
             base_res=base_res,
             vae_factor=vae_factor,
-            dim_limit=max_dim_limit
+            dim_limit=max_dim_limit,
         )
         # Store resolutions as int32 numpy array
         self.bucket_resolutions = np.array(_bucket_res, dtype=np.int32)
@@ -296,19 +300,20 @@ class LatentEncodingDataset(Dataset):
         # so the log_aspect_ratios is a list and is always the same order so no need for dict,
         # the same for the images, just store the idx of the path list and thats enough
 
-        self.buckets = self.assign_buckets(self.paths, self.raw_res, self.log_aspect_ratios, self.max_log_ar_diff)
+        self.buckets = self.assign_buckets(
+            self.paths, self.raw_res, self.log_aspect_ratios, self.max_log_ar_diff
+        )
 
         # Print samples per bucket
         for i in range(len(self.buckets)):
-            print(f"Bucket with res {_bucket_res[i]} : {self.buckets[i].shape} elements")
+            print(
+                f"Bucket with res {_bucket_res[i]} : {self.buckets[i].shape} elements"
+            )
 
         # Create flat index mapping for efficient access ONLY to assigned images
-        self.index_mapping = np.array(
-            self._create_index_mapping(), dtype=np.int32
-        )
+        self.index_mapping = np.array(self._create_index_mapping(), dtype=np.int32)
 
-        print(f"Initialized dataset with {len(self.index_mapping)} "
-              f"assignable images.")
+        print(f"Initialized dataset with {len(self.index_mapping)} assignable images.")
 
     def load_entry(self, p: Path, label_ext: str = ".txt"):
         """
@@ -334,7 +339,7 @@ class LatentEncodingDataset(Dataset):
             img = _img
         elif _img.mode == "RGBA":
             # Handle transparent images
-            baimg = Image.new('RGB', _img.size, (255, 255, 255))
+            baimg = Image.new("RGB", _img.size, (255, 255, 255))
             baimg.paste(_img, (0, 0), _img)
             img = baimg
         else:
@@ -355,19 +360,16 @@ class LatentEncodingDataset(Dataset):
                     prompt = f.read()
             return prompt
         except FileNotFoundError:
-            print(f"Warning: Label file not found for {p}, "
-                  f"using empty prompt.")
+            print(f"Warning: Label file not found for {p}, using empty prompt.")
             return ""
         except Exception as e:
-            print(f"Warning: Error reading label file for {p}: {e}, "
-                  f"using empty prompt.")
+            print(
+                f"Warning: Error reading label file for {p}: {e}, using empty prompt."
+            )
             return ""
 
-
     def _filter_valid_images(
-        self,
-        data_dir,
-        num_workers: int = os.cpu_count()//2 or 4
+        self, data_dir, num_workers: int = os.cpu_count() // 2 or 4
     ) -> Tuple[List[Path], List[Tuple[int, int]]]:
         """
         Filter valid images from a directory and return paths, dimensions,
@@ -392,14 +394,16 @@ class LatentEncodingDataset(Dataset):
 
         # Process images in parallel
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(process_image, p, self.label_ext) for p in img_paths]
+            futures = [
+                executor.submit(process_image, p, self.label_ext) for p in img_paths
+            ]
 
             for future in tqdm(
                 futures,
                 desc="Processing images",
                 total=len(img_paths),
                 leave=False,
-                ascii=True
+                ascii=True,
             ):
                 path, size, error = future.result()
                 if error is None:
@@ -430,7 +434,7 @@ class LatentEncodingDataset(Dataset):
         divisible: int,
         base_res: Resolution,
         vae_factor: int = 8,
-        dim_limit: int = 1024 # Max dimension size from NovelAI readme
+        dim_limit: int = 1024,  # Max dimension size from NovelAI readme
     ) -> Tuple[List[Resolution], List[float]]:
         """
         Generates bucket resolutions based on maximum latent area and constraints,
@@ -454,12 +458,14 @@ class LatentEncodingDataset(Dataset):
 
         # --- Generate Landscape-dominant buckets ---
         w = min_size
-        while (w / vae_factor) * (min_size / vae_factor) <= max_tokens \
-                and w <= dim_limit:
+        while (w / vae_factor) * (
+            min_size / vae_factor
+        ) <= max_tokens and w <= dim_limit:
             h = min_size
             # Find max height for this width within token limit and dim limit
-            while (w / vae_factor) * ((h + divisible) / vae_factor) <= max_tokens \
-                    and (h + divisible) <= dim_limit:
+            while (w / vae_factor) * ((h + divisible) / vae_factor) <= max_tokens and (
+                h + divisible
+            ) <= dim_limit:
                 h += divisible
             # Add this resolution if valid
             if h >= min_size:
@@ -468,12 +474,14 @@ class LatentEncodingDataset(Dataset):
 
         # --- Generate Portrait-dominant buckets ---
         h = min_size
-        while (min_size / vae_factor) * (h / vae_factor) <= max_tokens \
-                and h <= dim_limit:
+        while (min_size / vae_factor) * (
+            h / vae_factor
+        ) <= max_tokens and h <= dim_limit:
             w = min_size
             # Find max width for this height within token limit and dim limit
-            while ((w + divisible) / vae_factor) * (h / vae_factor) <= max_tokens \
-                    and (w + divisible) <= dim_limit:
+            while ((w + divisible) / vae_factor) * (h / vae_factor) <= max_tokens and (
+                w + divisible
+            ) <= dim_limit:
                 w += divisible
             # Add this resolution if valid
             if w >= min_size:
@@ -482,36 +490,44 @@ class LatentEncodingDataset(Dataset):
 
         # Ensure base resolution is included if it meets constraints
         # (Check token count and dimension limits)
-        if (base_res[0] / vae_factor) * (base_res[1] / vae_factor) <= max_tokens \
-                and base_res[0] >= min_size and base_res[1] >= min_size \
-                and base_res[0] <= dim_limit and base_res[1] <= dim_limit \
-                and base_res[0] % divisible == 0 \
-                and base_res[1] % divisible == 0:
+        if (
+            (base_res[0] / vae_factor) * (base_res[1] / vae_factor) <= max_tokens
+            and base_res[0] >= min_size
+            and base_res[1] >= min_size
+            and base_res[0] <= dim_limit
+            and base_res[1] <= dim_limit
+            and base_res[0] % divisible == 0
+            and base_res[1] % divisible == 0
+        ):
             possible_resolutions.add(base_res)
         else:
-            print(f"Warning: Base resolution {base_res} is invalid or exceeds "
+            print(
+                f"Warning: Base resolution {base_res} is invalid or exceeds "
                 f"max_tokens/dim_limit derived from max_size {max_size}. "
-                f"It might not be added unless generated by the loops.")
+                f"It might not be added unless generated by the loops."
+            )
 
         if not possible_resolutions:
-            raise ValueError("No valid bucket resolutions generated! Check "
-                            "constraints (min_size, max_size, dim_limit).")
+            raise ValueError(
+                "No valid bucket resolutions generated! Check "
+                "constraints (min_size, max_size, dim_limit)."
+            )
 
         # Sort for consistency - using NovelAI's sort key for closer matching
         # Sorts primarily by width, then inversely by height for tie-breaking
-        sorted_res = sorted(list(possible_resolutions),
-                            key=lambda r: (r[0] * dim_limit - r[1]))
-
+        sorted_res = sorted(
+            list(possible_resolutions), key=lambda r: (r[0] * dim_limit - r[1])
+        )
 
         # Pre-calculate log aspect ratios for efficient comparison
-        log_aspect_ratios = [
-            math.log(w / h) if h > 0 else 0 for w, h in sorted_res
-        ]
+        log_aspect_ratios = [math.log(w / h) if h > 0 else 0 for w, h in sorted_res]
         # print(f"Generated {len(sorted_res)} unique aspect ratio buckets ")
 
         return sorted_res, log_aspect_ratios
 
-    def assign_buckets(self, paths, resolutions, log_aspect_ratios, max_log_ar_diff=0.3):
+    def assign_buckets(
+        self, paths, resolutions, log_aspect_ratios, max_log_ar_diff=0.3
+    ):
         """Assigns each image ID to its closest bucket by log aspect ratio."""
         # if not resolutions:
         if resolutions.size == 0:
@@ -533,7 +549,7 @@ class LatentEncodingDataset(Dataset):
             # Use log aspect ratio for comparison (more robust than raw ratio)
             log_img_ar = math.log(width / height)
 
-            min_diff = float('inf')
+            min_diff = float("inf")
 
             diffs = np.abs(ar_array - log_img_ar)
             best_idx = int(diffs.argmin())
@@ -550,16 +566,20 @@ class LatentEncodingDataset(Dataset):
         pruned_count = initial_image_count - assigned_count
         print(f"Assigned {assigned_count}/{initial_image_count} images.")
         if pruned_count > 0:
-                print(f"Pruned {pruned_count} images due to extreme aspect "
-                    f"ratio (min log_ar_diff > {max_log_ar_diff:.3f}) "
-                    f"or invalid resolution.")
+            print(
+                f"Pruned {pruned_count} images due to extreme aspect "
+                f"ratio (min log_ar_diff > {max_log_ar_diff:.3f}) "
+                f"or invalid resolution."
+            )
 
         # Convert the lists contained in each bucket to a numpy array
         buckets = [np.array(buckets[i]) for i in range(len(buckets))]
 
         if not buckets:
-                raise ValueError("No images were assigned to any buckets. Check "
-                                "dataset resolutions and bucketing parameters.")
+            raise ValueError(
+                "No images were assigned to any buckets. Check "
+                "dataset resolutions and bucketing parameters."
+            )
         return buckets
 
     def fit_img2bucket(self, img, bucket_res):
@@ -606,12 +626,9 @@ class LatentEncodingDataset(Dataset):
 
         # Perform the crop
         # torchvision.transforms.v2.RandomCrop for posible optim
-        cropped_img = resized_img.crop((
-            start_x,
-            start_y,
-            start_x + target_w,
-            start_y + target_h
-        ))
+        cropped_img = resized_img.crop(
+            (start_x, start_y, start_x + target_w, start_y + target_h)
+        )
 
         return cropped_img
 
@@ -633,11 +650,9 @@ class LatentEncodingDataset(Dataset):
         mapping.sort(key=lambda x: x[1])
         return mapping
 
-
     def __len__(self) -> int:
         """Return the total number of ASSIGNED samples."""
-        return self.index_mapping.shape[0] #len(self.index_mapping)
-
+        return self.index_mapping.shape[0]  # len(self.index_mapping)
 
     def __getitem__(self, idx: int) -> Tuple[int, int, torch.Tensor, str]:
         """
@@ -656,7 +671,9 @@ class LatentEncodingDataset(Dataset):
         original_img_idx = int(original_img_idx)
 
         img_path = self.paths[original_img_idx]
-        bucket_resolution = tuple(map(int, self.bucket_resolutions[bucket_idx])) # self.bucket_resolutions[bucket_idx]
+        bucket_resolution = tuple(
+            map(int, self.bucket_resolutions[bucket_idx])
+        )  # self.bucket_resolutions[bucket_idx]
 
         # Load image and prompt
         try:
@@ -674,14 +691,15 @@ class LatentEncodingDataset(Dataset):
 
         # Fit image to bucket and transform
         img_w, img_h = img.size
-        print(f"Bucket ratio {self.log_aspect_ratios[bucket_idx]} and img ratio {math.log(img_w / img_h)}")
+        print(
+            f"Bucket ratio {self.log_aspect_ratios[bucket_idx]} and img ratio {math.log(img_w / img_h)}"
+        )
         img = self.fit_img2bucket(img, bucket_resolution)
         # Converts a PIL Image (H x W x C) to a Tensor of shape (C x H x W).
-        img_tensor = self.transform(img) # Apply the transform
-
+        img_tensor = self.transform(img)  # Apply the transform
 
         # CHANGED: Retrieve token delimiter information
-        start_token, end_token = -1, -1 # Default values
+        start_token, end_token = -1, -1  # Default values
         if self.df_tokens is not None and not self.already_tokenized:
             try:
                 base_filename = os.path.basename(img_path)
@@ -690,8 +708,8 @@ class LatentEncodingDataset(Dataset):
 
                 # Look up token info using the pre-indexed DataFrame
                 token_info = self.df_tokens.loc[img_id]
-                start_token = int(token_info['general_start_token'])
-                end_token = int(token_info['general_end_token'])
+                start_token = int(token_info["general_start_token"])
+                end_token = int(token_info["general_end_token"])
             except KeyError:
                 # This occurs if the image ID is not in the CSV
                 print(f"Warning: ID {img_id} not found in token file.")
@@ -700,13 +718,16 @@ class LatentEncodingDataset(Dataset):
 
         # if already_tokenized then prompt is a dict with 3 keys, prefix, suffix and general
         return (
-            img_tensor, prompt, original_img_idx, bucket_idx,
-            start_token, end_token
+            img_tensor,
+            prompt,
+            original_img_idx,
+            bucket_idx,
+            start_token,
+            end_token,
         )
 
     def get_prompts_for_assigned_indices(
-        self,
-        original_indices: List[int]
+        self, original_indices: List[int]
     ) -> Tuple[List[int], List[str]]:
         """
         Efficiently retrieves prompts for a given list of original image
@@ -722,6 +743,7 @@ class LatentEncodingDataset(Dataset):
             successfully loaded.
             - A list of the corresponding prompt strings.
         """
+
         # Define a worker function to load a prompt given an index
         def _load_prompt_worker(idx):
             try:
@@ -739,14 +761,16 @@ class LatentEncodingDataset(Dataset):
 
         # Use ThreadPoolExecutor for parallel I/O operations
         with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
-            futures = [executor.submit(_load_prompt_worker, idx) for idx in original_indices]
+            futures = [
+                executor.submit(_load_prompt_worker, idx) for idx in original_indices
+            ]
 
             # Process results as they complete
             for future in tqdm(
                 futures,
                 desc="Loading prompts",
                 total=len(original_indices),
-                leave=False
+                leave=False,
             ):
                 idx, prompt, error = future.result()
                 if error is None:
@@ -756,16 +780,16 @@ class LatentEncodingDataset(Dataset):
                     print(f"Warning: {error}")
 
         if len(loaded_indices) != len(original_indices):
-            print(f"Warning: Successfully loaded prompts for "
+            print(
+                f"Warning: Successfully loaded prompts for "
                 f"{len(loaded_indices)} out of {len(original_indices)} "
-                f"requested indices.")
+                f"requested indices."
+            )
 
         return loaded_indices, prompts
 
     def get_prepared_batch_by_indices(
-        self,
-        batch_original_indices: List[int],
-        bucket_idx: int
+        self, batch_original_indices: List[int], bucket_idx: int
     ) -> Tuple[torch.Tensor, List[str]]:
         """
         Loads, prepares (fits to bucket, transforms), and batches images and
@@ -807,18 +831,15 @@ class LatentEncodingDataset(Dataset):
 
                         # Look up token info using the pre-indexed DataFrame
                         token_info = self.df_tokens.loc[img_id]
-                        start_token = int(token_info['general_start_token'])
-                        end_token = int(token_info['general_end_token'])
+                        start_token = int(token_info["general_start_token"])
+                        end_token = int(token_info["general_end_token"])
                     except KeyError:
                         # This occurs if the image ID is not in the CSV
                         print(f"Warning: ID {img_id} not found in token file.")
                     except Exception as e:
                         print(f"Warning: Error getting tokens for {img_id}: {e}")
 
-                return (
-                    img_tensor, prompt, start_token, end_token,
-                    original_idx, None
-                )
+                return (img_tensor, prompt, start_token, end_token, original_idx, None)
             except Exception as e:
                 return None, None, None, None, original_idx, str(e)
 
@@ -836,7 +857,7 @@ class LatentEncodingDataset(Dataset):
                 futures,
                 desc=f"Processing images for bucket {bucket_idx}",
                 total=len(batch_original_indices),
-                leave=False
+                leave=False,
             ):
                 (img_tensor, prompt, start, end, o_idx, err) = future.result()
                 if err is None:
@@ -853,8 +874,10 @@ class LatentEncodingDataset(Dataset):
             c, h, w = 3, bucket_resolution[1], bucket_resolution[0]  # Assume 3 channels
             # Use dtype from the class instance
             empty_tensor = torch.empty((0, c, h, w), dtype=self.dtype)
-            print(f"Warning: No samples could be processed for batch in "
-                f"bucket {bucket_idx}. Returning empty batch.")
+            print(
+                f"Warning: No samples could be processed for batch in "
+                f"bucket {bucket_idx}. Returning empty batch."
+            )
             return empty_tensor, [], [], []
 
         # Stack the list of tensors into a single batch tensor
@@ -862,42 +885,39 @@ class LatentEncodingDataset(Dataset):
             return torch.stack(img_tensors), prompts, start_tokens, end_tokens
 
         except RuntimeError as e:
-            print(f"Error stacking tensors for bucket {bucket_idx}. "
-                f"Inconsistent shapes? {e}")
+            print(
+                f"Error stacking tensors for bucket {bucket_idx}. "
+                f"Inconsistent shapes? {e}"
+            )
             # Return empty tensor
             c, h, w = 3, bucket_resolution[1], bucket_resolution[0]
             empty_tensor = torch.empty((0, c, h, w), dtype=self.dtype)
             return empty_tensor, [], [], []
 
-
     def get_single_item_prepared(self, original_idx: int, bucket_idx: int):
-            """Helper for fallback batch loading - prepares one item."""
-            img_path = self.dataset.paths[original_idx]
-            bucket_resolution = self.dataset.bucket_resolutions[bucket_idx]
-            img, prompt = self.dataset.load_entry(img_path, self.dataset.label_ext)
-            img = self.dataset.fit_img2bucket(img, bucket_resolution)
-            img_tensor = self.dataset.transform(img)
-            # Return structure similar to __getitem__ but without indices
-            # CHANGED: Retrieve token delimiter information
-            start_token, end_token = -1, -1
-            if self.df_tokens is not None and not self.already_tokenized:
-                try:
-                    base_filename = os.path.basename(img_path)
-                    # Split the filename from its extension to get the clean ID.
-                    img_id = os.path.splitext(base_filename)[0]
-                    token_info = self.df_tokens.loc[img_id]
-                    start_token = int(token_info['general_start_token'])
-                    end_token = int(token_info['general_end_token'])
-                except KeyError:
-                    print(f"Warning: ID {img_id} not found in token file.")
-                except Exception as e:
-                    print(f"Warning: Error getting tokens for {img_id}: {e}")
+        """Helper for fallback batch loading - prepares one item."""
+        img_path = self.dataset.paths[original_idx]
+        bucket_resolution = self.dataset.bucket_resolutions[bucket_idx]
+        img, prompt = self.dataset.load_entry(img_path, self.dataset.label_ext)
+        img = self.dataset.fit_img2bucket(img, bucket_resolution)
+        img_tensor = self.dataset.transform(img)
+        # Return structure similar to __getitem__ but without indices
+        # CHANGED: Retrieve token delimiter information
+        start_token, end_token = -1, -1
+        if self.df_tokens is not None and not self.already_tokenized:
+            try:
+                base_filename = os.path.basename(img_path)
+                # Split the filename from its extension to get the clean ID.
+                img_id = os.path.splitext(base_filename)[0]
+                token_info = self.df_tokens.loc[img_id]
+                start_token = int(token_info["general_start_token"])
+                end_token = int(token_info["general_end_token"])
+            except KeyError:
+                print(f"Warning: ID {img_id} not found in token file.")
+            except Exception as e:
+                print(f"Warning: Error getting tokens for {img_id}: {e}")
 
-            return (
-                img_tensor, prompt, original_idx, bucket_idx,
-                start_token, end_token
-            )
-
+        return (img_tensor, prompt, original_idx, bucket_idx, start_token, end_token)
 
     def max_diff_ratio(self, buckets, paths, bucket_res, log_aspect_ratios):
         max_diff = 0.0
@@ -922,13 +942,15 @@ class LatentEncodingDataset(Dataset):
         # resize img
         img = self.fit_img2bucket(sample[0], bucket_res[bucket_idx])
         img_w, img_h = sample[0].size
-        print(f"Bucket ratio {log_aspect_ratios[bucket_idx]} and img ratio {math.log(img_w / img_h)}")
+        print(
+            f"Bucket ratio {log_aspect_ratios[bucket_idx]} and img ratio {math.log(img_w / img_h)}"
+        )
 
         fig, ax1 = plt.subplots(1, 2)
         ax1[0].imshow(img)
-        ax1[0].title.set_text('Cropped')
+        ax1[0].title.set_text("Cropped")
         ax1[1].imshow(sample[0])
-        ax1[1].title.set_text('Original')
+        ax1[1].title.set_text("Original")
         plt.show()
 
     def get_image_id(self, idx):
@@ -950,7 +972,9 @@ class LatentEncodingDataset(Dataset):
         prompt = self._load_prompt(image_path, self.label_ext)
         return prompt
 
+
 # (Handles encoding loop, H5 sharding, and JSON metadata)
+
 
 class LatentEncoder:
     """
@@ -958,15 +982,16 @@ class LatentEncoder:
     files (sharded by size) with bucket-specific groups, and creating a
     JSON metadata index.
     """
+
     def __init__(
         self,
-        dataset: 'LatentEncodingDataset', # Use quotes for forward reference
+        dataset: "LatentEncodingDataset",  # Use quotes for forward reference
         vae,
         text_encoder,
         tokenizer,
         output_dir: str,
         # 2K samples approx 1 GB of memory
-        samples_per_shard: int = 4000, # Approx samples per shard file
+        samples_per_shard: int = 4000,  # Approx samples per shard file
         batch_size: int = 8,
         num_workers: int = 4,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -976,25 +1001,25 @@ class LatentEncoder:
         h5_compression: Optional[str] = "gzip",
         # Add batch size for tokenization precomputation
         tokenization_batch_size: int = 1024,
-        cache_text_embeds: bool=False,
-        store_tokenized_captions: bool=True,
-        already_tokenized: bool=True,
-        min_sample_count: int=8,
+        cache_text_embeds: bool = False,
+        store_tokenized_captions: bool = True,
+        already_tokenized: bool = True,
+        min_sample_count: int = 8,
         aesthetic_csv_path: Optional[str] = None,
     ):
         self.dataset = dataset
-        self.vae = vae#.to(device).eval()
-        self.text_encoder = text_encoder#.to(device).eval()
+        self.vae = vae  # .to(device).eval()
+        self.text_encoder = text_encoder  # .to(device).eval()
         self.tokenizer = tokenizer
         self.output_dir = Path(output_dir)
-        self.samples_per_shard = samples_per_shard # Using sample count
+        self.samples_per_shard = samples_per_shard  # Using sample count
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.device = device
         self.dtype = dtype
         # Ensure tiers are sorted and store the overall max length
         self.length_tiers = sorted(length_tiers)
-        self.max_length = self.length_tiers[-1] # Overall max for truncation
+        self.max_length = self.length_tiers[-1]  # Overall max for truncation
         self.h5_compression = h5_compression
         self.tokenization_batch_size = tokenization_batch_size
         self.cache_text_embeds = cache_text_embeds
@@ -1016,20 +1041,32 @@ class LatentEncoder:
                 # Read the CSV and set the 'id' column as the index for
                 # fast lookups. The ID is read as a string to match the
                 # booru_id type from the dataset.
-                df = pd.read_csv(aesthetic_csv_path, dtype={'id': str})
-                df = df.drop_duplicates()
-                self.aesthetic_df = df.set_index('id')
-                self.aesthetic_df['final_tier_num'] = self.aesthetic_df['final_tier'].apply(
-                    lambda tier: AESTHETIC_LABEL[tier]
+                df = pd.read_csv(aesthetic_csv_path, dtype={"id": str})
+                df = df.drop_duplicates(subset=["id"], keep="last")
+                self.aesthetic_df = df.set_index("id")
+
+                def get_tier_num(tier):
+                    if pd.isna(tier):
+                        return -1
+                    return AESTHETIC_LABEL.get(tier, -1)
+
+                self.aesthetic_df["final_tier_num"] = self.aesthetic_df[
+                    "final_tier"
+                ].apply(get_tier_num)
+                print(
+                    f"Successfully loaded {len(self.aesthetic_df)} "
+                    "aesthetic tier entries."
                 )
-                print(f"Successfully loaded {len(self.aesthetic_df)} "
-                      "aesthetic tier entries.")
             except FileNotFoundError:
-                print(f"Warning: Aesthetic tier file not found at "
-                      f"{aesthetic_csv_path}. Proceeding without it.")
+                print(
+                    f"Warning: Aesthetic tier file not found at "
+                    f"{aesthetic_csv_path}. Proceeding without it."
+                )
             except Exception as e:
-                print(f"Warning: Failed to load aesthetic tier file: {e}. "
-                      "Proceeding without it.")
+                print(
+                    f"Warning: Failed to load aesthetic tier file: {e}. "
+                    "Proceeding without it."
+                )
 
     def _precompute_latent_shapes(self) -> List[Tuple[int, int, int]]:
         """
@@ -1038,18 +1075,18 @@ class LatentEncoder:
         """
         # Get VAE latent channel count (usually 4 for SD 1.5)
         # Run a dummy tensor through the encoder to find C if needed
-        dummy_input = torch.randn(
-            1, 3, 512, 512, device=self.device, dtype=self.dtype
-        )
+        dummy_input = torch.randn(1, 3, 512, 512, device=self.device, dtype=self.dtype)
         with torch.no_grad():
-            dummy_latent = torch.randn(1, 4, 64, 64)#self.vae.encode(dummy_input) # Or direct output
+            dummy_latent = torch.randn(
+                1, 4, 64, 64
+            )  # self.vae.encode(dummy_input) # Or direct output
         latent_channels = dummy_latent.shape[1]
         del dummy_input, dummy_latent
         if self.device == "cuda":
             torch.cuda.empty_cache()
 
         shapes = []
-        vae_scale_factor = 8 # Common for SD VAEs
+        vae_scale_factor = 8  # Common for SD VAEs
         for width, height in self.bucket_resolutions:
             width = int(width)
             height = int(height)
@@ -1069,9 +1106,8 @@ class LatentEncoder:
         return self.length_tiers[-1]
 
     def precompute_prompt_lengths_and_tiers(
-            self,
-            exclude_indices: Optional[Set[int]] = None
-        ):
+        self, exclude_indices: Optional[Set[int]] = None
+    ):
         """
         Calculates token length and assigns tiers for all valid prompts
         in the dataset, optionally excluding already processed indices.
@@ -1085,25 +1121,27 @@ class LatentEncoder:
         # We need original indices and prompts for samples that were assigned
         # Use the dataset's index_mapping
         indices_to_process = [
-            item[1] for item in self.dataset.index_mapping
+            item[1]
+            for item in self.dataset.index_mapping
             if item[1] not in exclude_indices
         ]
         num_valid_samples = len(indices_to_process)
 
         if num_valid_samples == 0:
-            return {} # Nothing to process
+            return {}  # Nothing to process
 
         print(f"Fetching prompts for {num_valid_samples} assigned samples...")
         try:
             # Ideal: A method that returns prompts only for assigned indices
-            original_indices, prompts = \
-                self.dataset.get_prompts_for_assigned_indices(
-                    indices_to_process
-                )
+            original_indices, prompts = self.dataset.get_prompts_for_assigned_indices(
+                indices_to_process
+            )
         except AttributeError:
             # Fallback: Load individually (less efficient)
-            print("Warning: Dataset lacks efficient prompt fetching. "
-                  "Loading prompts individually.")
+            print(
+                "Warning: Dataset lacks efficient prompt fetching. "
+                "Loading prompts individually."
+            )
             prompts = []
             original_indices = []
             for bucket_idx, original_idx in tqdm(
@@ -1112,14 +1150,15 @@ class LatentEncoder:
                 original_idx = int(original_idx)
                 try:
                     _, prompt = self.dataset.load_entry(
-                        self.dataset.paths[original_idx],
-                        self.dataset.label_ext
+                        self.dataset.paths[original_idx], self.dataset.label_ext
                     )
                     prompts.append(prompt)
                     original_indices.append(original_idx)
                 except Exception as e:
-                    print(f"Skipping prompt for index {original_idx} "
-                          f"due to load error: {e}")
+                    print(
+                        f"Skipping prompt for index {original_idx} "
+                        f"due to load error: {e}"
+                    )
             if not prompts:
                 raise RuntimeError("Failed to load any prompts.")
 
@@ -1127,23 +1166,23 @@ class LatentEncoder:
         # Batch tokenization for efficiency
         for i in tqdm(
             range(0, len(prompts), self.tokenization_batch_size),
-            desc="Tokenizing prompts"
+            desc="Tokenizing prompts",
         ):
-            batch_prompts = prompts[i:i+self.tokenization_batch_size]
-            batch_idxs = original_indices[i:i+self.tokenization_batch_size]
+            batch_prompts = prompts[i : i + self.tokenization_batch_size]
+            batch_idxs = original_indices[i : i + self.tokenization_batch_size]
 
             if not self.already_tokenized:
                 # Tokenize to get lengths after potential truncation
                 # Use max_length (overall max) for truncation consistency
                 inputs = self.tokenizer(
                     batch_prompts,
-                    padding=False, # Don't pad here, just count tokens
+                    padding=False,  # Don't pad here, just count tokens
                     truncation=True,
-                    max_length=self.max_length, # Truncate to overall max
+                    max_length=self.max_length,  # Truncate to overall max
                     return_length=True,
                 )
                 # 'length' includes special tokens if tokenizer adds them
-                lengths = inputs['length']
+                lengths = inputs["length"]
             else:
                 lengths = []
                 for i, prompt in enumerate(batch_prompts):
@@ -1155,15 +1194,16 @@ class LatentEncoder:
             for idx, length in zip(batch_idxs, lengths):
                 # Determine tier based on the token count
                 tier = self._determine_tier_from_length(length)
-                prompt_metadata[idx] = {'tier': tier}
+                prompt_metadata[idx] = {"tier": tier}
 
-        print(f"Finished pre-calculating tiers for {len(prompt_metadata)} "
-              f"prompts.")
+        print(f"Finished pre-calculating tiers for {len(prompt_metadata)} prompts.")
         # Add check: ensure all assigned indices got metadata
         if len(prompt_metadata) != num_valid_samples:
-             print(f"Warning: Metadata count ({len(prompt_metadata)}) "
-                   f"differs from assigned samples ({num_valid_samples}). "
-                   f"Check for loading/tokenization errors.")
+            print(
+                f"Warning: Metadata count ({len(prompt_metadata)}) "
+                f"differs from assigned samples ({num_valid_samples}). "
+                f"Check for loading/tokenization errors."
+            )
         return prompt_metadata
 
     def _load_and_prepare_cache_state(self):
@@ -1187,10 +1227,10 @@ class LatentEncoder:
         metadata_path = self.output_dir / "metadata.json"
         if not metadata_path.exists():
             print("No existing cache found. Starting a new one.")
-            return  [], 0, 0, defaultdict(lambda: defaultdict(int))
+            return [], 0, 0, defaultdict(lambda: defaultdict(int))
 
         print(f"Found existing cache at {metadata_path}. Resuming...")
-        with open(metadata_path, 'r') as f:
+        with open(metadata_path, "r") as f:
             metadata = json.load(f)
 
         all_sample_info = metadata.get("sample_mapping", [])
@@ -1206,7 +1246,7 @@ class LatentEncoder:
         # Determine sharding state from the last entry
         last_sample = all_sample_info[-1]
         last_shard_file = last_sample["shard_file"]
-        shard_idx_counter = int(last_shard_file.split('_')[-1].split('.')[0])
+        shard_idx_counter = int(last_shard_file.split("_")[-1].split(".")[0])
 
         samples_in_last_shard = sum(
             1 for s in all_sample_info if s["shard_file"] == last_shard_file
@@ -1229,14 +1269,18 @@ class LatentEncoder:
             if next_idx > current_max:
                 bucket_tier_counters[b_idx][tier] = next_idx
 
-        print(f"Resuming from shard {shard_idx_counter}. "
-              f"{samples_processed_in_shard} samples in current shard.")
+        print(
+            f"Resuming from shard {shard_idx_counter}. "
+            f"{samples_processed_in_shard} samples in current shard."
+        )
         # print(f"Last original_idx was {last_original_idx}. "
         #       "New indices will be offset accordingly.")
 
         return (
-            all_sample_info, shard_idx_counter,
-            samples_processed_in_shard, bucket_tier_counters
+            all_sample_info,
+            shard_idx_counter,
+            samples_processed_in_shard,
+            bucket_tier_counters,
         )
 
     def encode_dataset(self):
@@ -1246,8 +1290,10 @@ class LatentEncoder:
         """
         # 1. Load existing cache state if available.
         (
-            all_sample_info, shard_idx_counter,
-            samples_processed_in_shard, bucket_tier_sample_counters
+            all_sample_info,
+            shard_idx_counter,
+            samples_processed_in_shard,
+            bucket_tier_sample_counters,
         ) = self._load_and_prepare_cache_state()
         # print(
         #     f"Last idx: {last_original_idx}"
@@ -1258,9 +1304,7 @@ class LatentEncoder:
 
         # The dataset object now represents ONLY the NEW data to be added.
         # We no longer exclude indices; we process the entire new dataset.
-        prompt_metadata = self.precompute_prompt_lengths_and_tiers(
-            exclude_indices=None
-        )
+        prompt_metadata = self.precompute_prompt_lengths_and_tiers(exclude_indices=None)
 
         # Group samples from the NEW dataset.
         grouped_samples = self._group_samples_by_bucket_and_tier(
@@ -1278,12 +1322,12 @@ class LatentEncoder:
             print("Error: No samples available for encoding after grouping.")
             return
 
-        num_shards = math.ceil(
-            total_samples_to_encode / self.samples_per_shard
+        num_shards = math.ceil(total_samples_to_encode / self.samples_per_shard)
+        print(
+            f"Encoding {total_samples_to_encode} samples into "
+            f"approximately {num_shards} shards (target "
+            f"{self.samples_per_shard} samples/shard)..."
         )
-        print(f"Encoding {total_samples_to_encode} samples into "
-              f"approximately {num_shards} shards (target "
-              f"{self.samples_per_shard} samples/shard)...")
         print(f"Cache text embeddings: {self.cache_text_embeds}")
         print(f"Store tokenized captions: {self.store_tokenized_captions}")
 
@@ -1315,21 +1359,21 @@ class LatentEncoder:
                     token_shape = (tier,)
 
                     # Create batches *from this specific group*
-                    for i in range(
-                        0, len(sample_indices_in_group), self.batch_size
-                        ):
+                    for i in range(0, len(sample_indices_in_group), self.batch_size):
                         # 1. --- Shard Management ---
                         if h5_file is None:
                             fname = f"latents_shard_{shard_idx_counter:05d}.h5"
                             shard_path = self.output_dir / fname
-                            mode = 'a' if samples_processed_in_shard > 0 else 'w'
+                            mode = "a" if samples_processed_in_shard > 0 else "w"
 
-                            if mode == 'a' and not shard_path.exists():
-                                print(f"\nWarning: Shard file {shard_path} "
-                                      "not found for appending. Creating a "
-                                      "new file. This may indicate a "
-                                      "corrupted cache.")
-                                mode = 'w'
+                            if mode == "a" and not shard_path.exists():
+                                print(
+                                    f"\nWarning: Shard file {shard_path} "
+                                    "not found for appending. Creating a "
+                                    "new file. This may indicate a "
+                                    "corrupted cache."
+                                )
+                                mode = "w"
 
                             h5_file = h5py.File(shard_path, mode)
                             print(f"\nOpening shard: {shard_path} in mode '{mode}'")
@@ -1348,32 +1392,39 @@ class LatentEncoder:
                         # This needs implementation in LatentEncodingDataset
                         try:
                             # Ideal: Fetch transformed images and prompts
-                            img_tensors, prompts, start_tokens, end_tokens = \
+                            img_tensors, prompts, start_tokens, end_tokens = (
                                 self.dataset.get_prepared_batch_by_indices(
                                     batch_original_indices, bucket_idx
                                 )
+                            )
                         except AttributeError:
                             # Fallback: Load and transform individually (SLOW)
-                            print("Warning: Dataset lacks efficient batch "
-                                  "fetching. Loading/transforming samples "
-                                  "individually for batch.")
+                            print(
+                                "Warning: Dataset lacks efficient batch "
+                                "fetching. Loading/transforming samples "
+                                "individually for batch."
+                            )
                             img_tensors_list = []
                             prompts = []
                             valid_indices_in_batch = []
                             for orig_idx in batch_original_indices:
                                 try:
                                     # Reuse __getitem__ logic carefully
-                                    img_tensor, prompt, _, _ = \
+                                    img_tensor, prompt, _, _ = (
                                         self.dataset.get_single_item_prepared(
                                             orig_idx, bucket_idx
                                         )
+                                    )
                                     img_tensors_list.append(img_tensor)
                                     prompts.append(prompt)
                                     valid_indices_in_batch.append(orig_idx)
                                 except Exception as e:
-                                     print(f"Error preparing sample "
-                                           f"{orig_idx} for batch: {e}")
-                            if not img_tensors_list: continue # Skip empty batch
+                                    print(
+                                        f"Error preparing sample "
+                                        f"{orig_idx} for batch: {e}"
+                                    )
+                            if not img_tensors_list:
+                                continue  # Skip empty batch
                             img_tensors = torch.stack(img_tensors_list)
                             batch_original_indices = valid_indices_in_batch
                             current_batch_size = len(batch_original_indices)
@@ -1386,27 +1437,29 @@ class LatentEncoder:
                                 try:
                                     # Use .loc for fast lookup
                                     tier_val = self.aesthetic_df.loc[
-                                        booru_id, 'final_tier_num'
+                                        booru_id, "final_tier_num"
                                     ]
                                     aesthetic_tiers_list.append(int(tier_val))
                                 except KeyError:
                                     # Handle cases where the ID is not in the CSV
-                                    print(f"Warning: booru_id {booru_id} not "
-                                          "found in aesthetic CSV. "
-                                          "Defaulting to -1.")
+                                    print(
+                                        f"Warning: booru_id {booru_id} not "
+                                        "found in aesthetic CSV. "
+                                        "Defaulting to -1."
+                                    )
                                     aesthetic_tiers_list.append(-1)
 
                         # Move image tensors to device
-                        img_tensors = img_tensors.to(
-                            self.device, dtype=self.dtype
-                        )
+                        img_tensors = img_tensors.to(self.device, dtype=self.dtype)
 
                         # --- Encode Batch (remains similar, ensure dtype is handled) ---
                         with torch.no_grad():
                             # VAE Encoding - Use .sample() or direct output as appropriate
                             image_latents = self.vae.encode(img_tensors)
                             # Convert latents to float32 numpy for H5 storage
-                            image_latents_np = image_latents.detach().cpu().float().numpy()
+                            image_latents_np = (
+                                image_latents.detach().cpu().float().numpy()
+                            )
 
                             # Text processing
                             text_embeddings_np = None
@@ -1414,18 +1467,28 @@ class LatentEncoder:
                             if self.cache_text_embeds:
                                 # Text Encoding
                                 text_embeddings = encode_text_batch(
-                                    prompts, self.text_encoder, self.tokenizer,
-                                    max_length=tier, device=self.device
+                                    prompts,
+                                    self.text_encoder,
+                                    self.tokenizer,
+                                    max_length=tier,
+                                    device=self.device,
                                 )
                                 # print(f"Tier {tier} Text embeddings shape {text_embeddings.shape} and Latents shape {image_latents.shape}")
                                 # Convert embeddings to float32 numpy for H5 storage
-                                text_embeddings_np = text_embeddings.detach().cpu().float().numpy()
+                                text_embeddings_np = (
+                                    text_embeddings.detach().cpu().float().numpy()
+                                )
 
                         # 3. --- H5 Dataset Initialization (On-Demand) ---
                         if tier not in h5_datasets[bucket_idx]:
                             self._initialize_h5_datasets_for_tier(
-                                h5_file, h5_datasets, bucket_idx, tier,
-                                latent_shape, embed_shape, token_shape
+                                h5_file,
+                                h5_datasets,
+                                bucket_idx,
+                                tier,
+                                latent_shape,
+                                embed_shape,
+                                token_shape,
                             )
 
                         # 4. --- Batch Data Writing to H5 ---
@@ -1433,35 +1496,50 @@ class LatentEncoder:
                         # loaded from the previous state.
                         start_idx = bucket_tier_sample_counters[bucket_idx][tier]
                         self._write_batch_to_h5(
-                            h5_datasets, bucket_idx, tier, start_idx,
-                            current_batch_size, image_latents_np, text_embeddings_np, prompts,
-                            start_tokens, end_tokens, token_shape
+                            h5_datasets,
+                            bucket_idx,
+                            tier,
+                            start_idx,
+                            current_batch_size,
+                            image_latents_np,
+                            text_embeddings_np,
+                            prompts,
+                            start_tokens,
+                            end_tokens,
+                            token_shape,
                         )
                         # 5. --- Metadata Collection ---
                         for k in range(current_batch_size):
                             # This is the index from the *new* dataset instance
                             # new_dataset_original_idx = batch_original_indices[k]
 
-                            new_sample_info.append({
-                                # Create a globally unique original_idx
-                                # "original_idx": (
-                                #     last_original_idx + 1 +
-                                #     new_dataset_original_idx
-                                # ),
-                                "shard_file": h5_file.filename.split('/')[-1],
-                                "bucket_idx": bucket_idx,
-                                "tier": tier,
-                                # Index within the specific dataset in the shard
-                                "idx_in_tier": start_idx + k,
-                                "booru_id": self.dataset.get_image_id(batch_original_indices[k]),
-                            })
+                            new_sample_info.append(
+                                {
+                                    # Create a globally unique original_idx
+                                    # "original_idx": (
+                                    #     last_original_idx + 1 +
+                                    #     new_dataset_original_idx
+                                    # ),
+                                    "shard_file": h5_file.filename.split("/")[-1],
+                                    "bucket_idx": bucket_idx,
+                                    "tier": tier,
+                                    # Index within the specific dataset in the shard
+                                    "idx_in_tier": start_idx + k,
+                                    "booru_id": self.dataset.get_image_id(
+                                        batch_original_indices[k]
+                                    ),
+                                }
+                            )
                             if self.aesthetic_df is not None:
                                 # take always the last element
-                                new_sample_info[-1]["aesthetic_tier"] = \
+                                new_sample_info[-1]["aesthetic_tier"] = (
                                     aesthetic_tiers_list[k]
+                                )
 
                         # 6. --- Counter Updates ---
-                        bucket_tier_sample_counters[bucket_idx][tier] += current_batch_size
+                        bucket_tier_sample_counters[bucket_idx][tier] += (
+                            current_batch_size
+                        )
                         samples_processed_in_shard += current_batch_size
                         global_sample_idx += current_batch_size
                         pbar.update(current_batch_size)
@@ -1470,7 +1548,7 @@ class LatentEncoder:
                         if samples_processed_in_shard >= self.samples_per_shard:
                             h5_file.close()
                             h5_file = None
-                            samples_processed_in_shard = 0 # Reset for next shard
+                            samples_processed_in_shard = 0  # Reset for next shard
                             shard_idx_counter += 1
 
                         # --- Memory Management ---
@@ -1484,7 +1562,6 @@ class LatentEncoder:
                             gc.collect()
                         except:
                             print("Error when free memory: {e}")
-
 
         finally:
             # Close the last H5 file
@@ -1523,7 +1600,7 @@ class LatentEncoder:
             print("Error: metadata.json not found. Cannot add tag weights.")
             return
 
-        with open(metadata_path, 'r') as f:
+        with open(metadata_path, "r") as f:
             all_sample_info = json.load(f).get("sample_mapping", [])
 
         if not all_sample_info:
@@ -1534,16 +1611,17 @@ class LatentEncoder:
         #    optimization to avoid opening/closing H5 files repeatedly.
         samples_by_shard = defaultdict(list)
         for sample in all_sample_info:
-            samples_by_shard[sample['shard_file']].append(sample)
+            samples_by_shard[sample["shard_file"]].append(sample)
 
-        print(f"Found {len(all_sample_info)} samples across "
-              f"{len(samples_by_shard)} shards.")
+        print(
+            f"Found {len(all_sample_info)} samples across "
+            f"{len(samples_by_shard)} shards."
+        )
 
         # 3. If update_all_samples is True, delete all existing tag_weight
         #    datasets first. This allows them to be recreated correctly.
         if update_all_samples:
-            print("Update mode: Deleting all existing 'tag_weight' "
-                  "datasets...")
+            print("Update mode: Deleting all existing 'tag_weight' datasets...")
             for shard_filename in tqdm(
                 samples_by_shard.keys(), desc="Resetting Tag Weights"
             ):
@@ -1552,7 +1630,7 @@ class LatentEncoder:
                     continue
 
                 try:
-                    with h5py.File(shard_path, 'a') as h5_file:
+                    with h5py.File(shard_path, "a") as h5_file:
                         # Iterate through all groups to find and delete
                         # the target dataset without altering others.
                         for b_group_name in h5_file:
@@ -1565,11 +1643,13 @@ class LatentEncoder:
                                 tier_group = bucket_group[t_group_name]
 
                                 # If the dataset exists, delete it.
-                                if 'tag_weight' in tier_group:
-                                    del tier_group['tag_weight']
+                                if "tag_weight" in tier_group:
+                                    del tier_group["tag_weight"]
                 except Exception as e:
-                    print(f"\nWarning: Could not process shard "
-                          f"{shard_filename} for deletion: {e}")
+                    print(
+                        f"\nWarning: Could not process shard "
+                        f"{shard_filename} for deletion: {e}"
+                    )
             print("--- Deletion of existing tag weights complete. ---")
 
         # 3. Define the worker function for asynchronous prompt fetching.
@@ -1589,8 +1669,10 @@ class LatentEncoder:
             except KeyError as e:
                 # Handle cases where prompt is not a dict or weight invalid
                 # shouldn't happen as the weights must be computed for all data
-                print(f"Warning: Could not parse tag_weight for "
-                      f"booru_id {booru_id}. Defaulting to 1.0. Error: {e}")
+                print(
+                    f"Warning: Could not parse tag_weight for "
+                    f"booru_id {booru_id}. Defaulting to 1.0. Error: {e}"
+                )
                 return None, None
 
         # 4. Iterate over each shard file to perform the updates.
@@ -1606,11 +1688,11 @@ class LatentEncoder:
             # (bucket and tier) for targeted H5 dataset updates.
             samples_by_group = defaultdict(list)
             for sample in samples_in_shard:
-                group_key = (sample['bucket_idx'], sample['tier'])
+                group_key = (sample["bucket_idx"], sample["tier"])
                 samples_by_group[group_key].append(sample)
 
             # Use 'a' mode to read existing structure and add new data.
-            with h5py.File(shard_path, 'a') as h5_file:
+            with h5py.File(shard_path, "a") as h5_file:
                 # Process each bucket/tier group within the shard.
                 for (b_idx, tier), group_samples in samples_by_group.items():
                     b_group_name = f"bucket_{b_idx}"
@@ -1619,8 +1701,10 @@ class LatentEncoder:
                     try:
                         tier_group = h5_file[b_group_name][t_group_name]
                     except KeyError:
-                        print(f"Warning: Group {b_group_name}/{t_group_name} "
-                              f"not found in {shard_filename}. Skipping.")
+                        print(
+                            f"Warning: Group {b_group_name}/{t_group_name} "
+                            f"not found in {shard_filename}. Skipping."
+                        )
                         continue
 
                     # Skip if already processed to make the process resumable.
@@ -1629,9 +1713,7 @@ class LatentEncoder:
 
                     # Fetch all tag weights for this group in parallel.
                     indices, weights = [], []
-                    with ThreadPoolExecutor(
-                        max_workers=self.num_workers
-                    ) as executor:
+                    with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
                         # Map the worker to all samples in the current group.
                         future_to_sample = {
                             executor.submit(fetch_weight_worker, s): s
@@ -1645,14 +1727,16 @@ class LatentEncoder:
                                 weights.append(weight)
 
                     if not indices:
-                        print(f"Warning: No weights fetched for group "
-                              f"{b_idx}/{tier} in {shard_filename}.")
+                        print(
+                            f"Warning: No weights fetched for group "
+                            f"{b_idx}/{tier} in {shard_filename}."
+                        )
                         continue
 
                     # Determine the required size from a reference dataset.
                     # This ensures the tag_weight dataset matches the number
                     # of latents already cached for this group.
-                    required_size = len(tier_group['latents'])
+                    required_size = len(tier_group["latents"])
                     dataset_name = "tag_weight"
 
                     # Check if the dataset already exists and handle
@@ -1672,23 +1756,20 @@ class LatentEncoder:
                         tag_weight_dset = tier_group.create_dataset(
                             dataset_name,
                             shape=(required_size, 1),
-                            maxshape=(None, 1), # Allows future resizing
+                            maxshape=(None, 1),  # Allows future resizing
                             dtype=np.float32,
-                            compression=self.h5_compression
+                            compression=self.h5_compression,
                         )
 
                     # Prepare data for efficient batch writing.
                     indices_np = np.array(indices, dtype=int)
-                    weights_np = np.array(
-                        weights, dtype=np.float32
-                    ).reshape(-1, 1)
+                    weights_np = np.array(weights, dtype=np.float32).reshape(-1, 1)
 
                     # Write all fetched data for this group in one operation
                     # using advanced (fancy) indexing.
                     tag_weight_dset[indices_np] = weights_np
 
         print("--- Tag weight encoding finished ---")
-
 
     # --- _save_json_metadata updated to include tier info ---
     def _save_json_metadata(self, all_sample_info: List[Dict]):
@@ -1720,15 +1801,17 @@ class LatentEncoder:
             }
             total_count = sum(tier_counts.values())
 
-            bucket_info.append({
-                "bucket_idx": i,
-                "resolution": tuple(map(int, self.dataset.bucket_resolutions[i])),
-                "latents_resolution": self.bucket_latent_shapes[i][1:], # H, W
-                "latent_channels": self.bucket_latent_shapes[i][0], # C
-                "log_aspect_ratio": self.dataset.log_aspect_ratios[i],
-                "total_count": total_count,
-                "tier_counts": tier_counts # Counts per tier in this bucket
-            })
+            bucket_info.append(
+                {
+                    "bucket_idx": i,
+                    "resolution": tuple(map(int, self.dataset.bucket_resolutions[i])),
+                    "latents_resolution": self.bucket_latent_shapes[i][1:],  # H, W
+                    "latent_channels": self.bucket_latent_shapes[i][0],  # C
+                    "log_aspect_ratio": self.dataset.log_aspect_ratios[i],
+                    "total_count": total_count,
+                    "tier_counts": tier_counts,  # Counts per tier in this bucket
+                }
+            )
 
         metadata = {
             "dataset_info": {
@@ -1742,18 +1825,16 @@ class LatentEncoder:
             },
             "bucket_info": bucket_info,
             # Sample mapping now points to bucket/tier specific index
-            "sample_mapping": all_sample_info
+            "sample_mapping": all_sample_info,
         }
 
-        with open(metadata_path, 'w') as f:
+        with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=4)
 
         print("Metadata saved successfully.")
 
     def _group_samples_by_bucket_and_tier(
-        self,
-        prompt_metadata: Dict,
-        exclude_indices: Optional[Set[int]] = None
+        self, prompt_metadata: Dict, exclude_indices: Optional[Set[int]] = None
     ):
         """
         Helper to group sample indices by bucket and tier, optionally
@@ -1774,14 +1855,16 @@ class LatentEncoder:
             original_idx = int(original_idx)
 
             if original_idx in prompt_metadata:
-                tier = prompt_metadata[original_idx]['tier']
+                tier = prompt_metadata[original_idx]["tier"]
                 grouped_samples[bucket_idx][tier].append(original_idx)
             else:
                 # This sample's prompt failed loading/tokenization earlier
                 unassigned_count += 1
         if unassigned_count > 0:
-            print(f"Warning: {unassigned_count} samples could not be "
-                  f"assigned a tier due to earlier errors.")
+            print(
+                f"Warning: {unassigned_count} samples could not be "
+                f"assigned a tier due to earlier errors."
+            )
 
         if self.min_sample_count > 0:
             # Step 1: Use a nested dictionary comprehension to filter out
@@ -1809,8 +1892,14 @@ class LatentEncoder:
         return grouped_samples
 
     def _initialize_h5_datasets_for_tier(
-        self, h5_file, h5_datasets, bucket_idx, tier,
-        latent_shape, embed_shape, token_shape
+        self,
+        h5_file,
+        h5_datasets,
+        bucket_idx,
+        tier,
+        latent_shape,
+        embed_shape,
+        token_shape,
     ):
         """Initializes all necessary HDF5 datasets for a new tier."""
         b_group_name = f"bucket_{bucket_idx}"
@@ -1825,17 +1914,23 @@ class LatentEncoder:
         tier_group = bucket_group.require_group(t_group_name)
 
         # Common datasets
-        h5_datasets[bucket_idx][tier]['latents'] = tier_group.require_dataset(
-            "latents", shape=(0, *latent_shape),
-            maxshape=(None, *latent_shape), dtype=np.float32,
-            chunks=(1, *latent_shape), compression=self.h5_compression
+        h5_datasets[bucket_idx][tier]["latents"] = tier_group.require_dataset(
+            "latents",
+            shape=(0, *latent_shape),
+            maxshape=(None, *latent_shape),
+            dtype=np.float32,
+            chunks=(1, *latent_shape),
+            compression=self.h5_compression,
         )
 
         if self.cache_text_embeds:
-            h5_datasets[bucket_idx][tier]['embeds'] = tier_group.require_dataset(
-                "text_embeddings", shape=(0, *embed_shape),
-                maxshape=(None, *embed_shape), dtype=np.float32,
-                chunks=(1, *embed_shape), compression=self.h5_compression
+            h5_datasets[bucket_idx][tier]["embeds"] = tier_group.require_dataset(
+                "text_embeddings",
+                shape=(0, *embed_shape),
+                maxshape=(None, *embed_shape),
+                dtype=np.float32,
+                chunks=(1, *embed_shape),
+                compression=self.h5_compression,
             )
 
         # Conditional token datasets
@@ -1844,41 +1939,54 @@ class LatentEncoder:
                 vlen_dtype = h5py.vlen_dtype(np.int64)
                 for part in ["prefix", "general", "suffix"]:
                     key = f"{part}_tokens"
-                    h5_datasets[bucket_idx][tier][key] = \
-                        tier_group.require_dataset(
-                            key, shape=(0,), maxshape=(None,),
-                            dtype=vlen_dtype, chunks=True
-                        )
+                    h5_datasets[bucket_idx][tier][key] = tier_group.require_dataset(
+                        key, shape=(0,), maxshape=(None,), dtype=vlen_dtype, chunks=True
+                    )
             else:
-                h5_datasets[bucket_idx][tier]['tokens'] = \
+                h5_datasets[bucket_idx][tier]["tokens"] = tier_group.require_dataset(
+                    "text_tokens",
+                    shape=(0, *token_shape),
+                    maxshape=(None, *token_shape),
+                    dtype=np.int64,
+                    chunks=(1, *token_shape),
+                    compression=self.h5_compression,
+                )
+                h5_datasets[bucket_idx][tier]["start_end_tokens"] = (
                     tier_group.require_dataset(
-                        "text_tokens", shape=(0, *token_shape),
-                        maxshape=(None, *token_shape), dtype=np.int64,
-                        chunks=(1, *token_shape),
-                        compression=self.h5_compression
+                        "start_end_tokens",
+                        shape=(0, 2),
+                        maxshape=(None, 2),
+                        dtype=np.int64,
+                        chunks=(1, 2),
+                        compression=self.h5_compression,
                     )
-                h5_datasets[bucket_idx][tier]['start_end_tokens'] = \
-                    tier_group.require_dataset(
-                        "start_end_tokens", shape=(0, 2),
-                        maxshape=(None, 2), dtype=np.int64, chunks=(1, 2),
-                        compression=self.h5_compression
-                    )
+                )
 
     def _write_batch_to_h5(
-        self, h5_datasets, bucket_idx, tier, start_idx, batch_size,
-        latents_np, embeds_np, prompts, start_tokens, end_tokens, token_shape
+        self,
+        h5_datasets,
+        bucket_idx,
+        tier,
+        start_idx,
+        batch_size,
+        latents_np,
+        embeds_np,
+        prompts,
+        start_tokens,
+        end_tokens,
+        token_shape,
     ):
         """Writes a full batch of data to the appropriate H5 datasets."""
         datasets = h5_datasets[bucket_idx][tier]
         end_idx = start_idx + batch_size
 
         # Write fixed-size arrays in a single, efficient batch operation
-        ds_latents = datasets['latents']
+        ds_latents = datasets["latents"]
         ds_latents.resize((end_idx, *ds_latents.shape[1:]))
         ds_latents[start_idx:end_idx] = latents_np
 
         if self.cache_text_embeds and embeds_np is not None:
-            ds_embeds = datasets['embeds']
+            ds_embeds = datasets["embeds"]
             ds_embeds.resize((end_idx, *ds_embeds.shape[1:]))
             ds_embeds[start_idx:end_idx] = embeds_np
 
@@ -1887,9 +1995,9 @@ class LatentEncoder:
             if self.already_tokenized:
                 # For vlen, we resize once then write sample-by-sample
                 # This is still far more efficient than resizing per sample
-                ds_prefix = datasets['prefix_tokens']
-                ds_general = datasets['general_tokens']
-                ds_suffix = datasets['suffix_tokens']
+                ds_prefix = datasets["prefix_tokens"]
+                ds_general = datasets["general_tokens"]
+                ds_suffix = datasets["suffix_tokens"]
 
                 ds_prefix.resize((end_idx,))
                 ds_general.resize((end_idx,))
@@ -1897,9 +2005,15 @@ class LatentEncoder:
 
                 for k, prompt_dict in enumerate(prompts):
                     idx = start_idx + k
-                    ds_prefix[idx] = np.array(prompt_dict["prefix_tokens"], dtype=np.int64)
-                    ds_general[idx] = np.array(prompt_dict["general_tokens"], dtype=np.int64)
-                    ds_suffix[idx] = np.array(prompt_dict["suffix_tokens"], dtype=np.int64)
+                    ds_prefix[idx] = np.array(
+                        prompt_dict["prefix_tokens"], dtype=np.int64
+                    )
+                    ds_general[idx] = np.array(
+                        prompt_dict["general_tokens"], dtype=np.int64
+                    )
+                    ds_suffix[idx] = np.array(
+                        prompt_dict["suffix_tokens"], dtype=np.int64
+                    )
             else:
                 # Tokenize on the fly and write as a batch
                 tokens_np = tokenize_text_batch(
@@ -1909,10 +2023,10 @@ class LatentEncoder:
                     list(zip(start_tokens, end_tokens)), dtype=np.int64
                 )
 
-                ds_tokens = datasets['tokens']
+                ds_tokens = datasets["tokens"]
                 ds_tokens.resize((end_idx, *token_shape))
                 ds_tokens[start_idx:end_idx] = tokens_np
 
-                ds_start_end = datasets['start_end_tokens']
+                ds_start_end = datasets["start_end_tokens"]
                 ds_start_end.resize((end_idx, 2))
                 ds_start_end[start_idx:end_idx] = start_end_np

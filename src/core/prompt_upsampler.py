@@ -29,8 +29,8 @@ import pandas as pd
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ Resolution = Tuple[int, int]
 # Allow loading truncated images
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 DEFAULT_IMG_SIZE = (448, 448)
-PERSON_COUNT_REGEX = re.compile(r'\b\d+\+?(?:boy|girl)s?\b')
+PERSON_COUNT_REGEX = re.compile(r"\b\d+\+?(?:boy|girl)s?\b")
 
 
 class TaggerDataset(Dataset):
@@ -48,17 +48,18 @@ class TaggerDataset(Dataset):
     Loads images, preprocesses them according to tagger requirements,
     and returns the tensor along with the original prompt and image path.
     """
+
     def __init__(
         self,
         root: Union[str, Path],
-        tagger_input_size: Tuple[int, int], # e.g., (448, 448) H, W
-        tagger_means: List[float],       # e.g., [0.5, 0.5, 0.5]
-        tagger_stds: List[float],        # e.g., [0.5, 0.5, 0.5]
+        tagger_input_size: Tuple[int, int],  # e.g., (448, 448) H, W
+        tagger_means: List[float],  # e.g., [0.5, 0.5, 0.5]
+        tagger_stds: List[float],  # e.g., [0.5, 0.5, 0.5]
         label_ext: str = ".txt",
         global_path: Optional[str] = None,
         booru_df_path: Optional[str] = None,
         num_workers: int = 4,
-        resample_filter = PILImageResampling.BILINEAR,
+        resample_filter=PILImageResampling.BILINEAR,
         # Add other necessary params like padding color if needed by resize
         padding_color: Tuple[int, int, int] = (255, 255, 255),
     ):
@@ -83,16 +84,13 @@ class TaggerDataset(Dataset):
         self.tagger_stds = tagger_stds
         self.resample_filter = resample_filter
         self.padding_color = padding_color
-        self.rescale_factor = 1 / 255.0 # Standard rescale
+        self.rescale_factor = 1 / 255.0  # Standard rescale
 
         # Find all image paths (reuse dirwalk or similar logic)
         # Consider reusing _filter_valid_images if applicable
         logger.info(f"Scanning for images in {self.root}...")
         # Replace the slow, single-threaded call with the new parallel one.
-        self.image_paths = parallel_scan_images(
-            self.root,
-            num_workers=num_workers
-        )
+        self.image_paths = parallel_scan_images(self.root, num_workers=num_workers)
         # Optional: Add filtering for valid images here if needed
         logger.info(f"Found {len(self.image_paths)} potential image files.")
 
@@ -114,10 +112,10 @@ class TaggerDataset(Dataset):
         #    Ensure resize_with_padding handles BGR conversion correctly!
         processed_image = resize_with_padding(
             image=image_array,
-            size=self.tagger_input_size, # Use tagger's size (H, W)
+            size=self.tagger_input_size,  # Use tagger's size (H, W)
             color=self.padding_color,
             resample=self.resample_filter,
-            data_format=ChannelDimension.FIRST # PyTorch expects channels first
+            data_format=ChannelDimension.FIRST,  # PyTorch expects channels first
         )
 
         # 2. Rescale values to [0, 1]
@@ -127,7 +125,7 @@ class TaggerDataset(Dataset):
             processed_image = rescale(
                 processed_image,
                 scale=self.rescale_factor,
-                data_format=ChannelDimension.FIRST
+                data_format=ChannelDimension.FIRST,
             )
 
         # 3. Normalize with tagger's mean and std
@@ -135,7 +133,7 @@ class TaggerDataset(Dataset):
             processed_image,
             mean=self.tagger_means,
             std=self.tagger_stds,
-            data_format=ChannelDimension.FIRST
+            data_format=ChannelDimension.FIRST,
         )
 
         # 4. Convert final processed numpy array to PyTorch tensor
@@ -154,53 +152,61 @@ class TaggerDataset(Dataset):
 
         # Metadata dictionary to pass to validation
         metadata = {
-            'tag_string_general': '',
-            'tag_count_character': None,
-            'original_prompt': ''
+            "tag_string_general": "",
+            "tag_count_character": None,
+            "original_prompt": "",
         }
 
         try:
             # Attempt to read the corresponding prompt file
             prompt_path = img_path.with_suffix(self.label_ext)
             if prompt_path.exists():
-                with prompt_path.open("r", encoding='utf-8') as f:
+                with prompt_path.open("r", encoding="utf-8") as f:
                     prompt = f.read().strip()
             elif self.booru_df is not None:
                 try:
                     # Assuming filename is ID
                     img_id = int(os.path.splitext(os.path.basename(img_path))[0])
-                    row = self.booru_df[self.booru_df['id'] == img_id]
+                    row = self.booru_df[self.booru_df["id"] == img_id]
                     if not row.empty:
-                        prompt = row['tag_string'].iloc[0]
+                        prompt = row["tag_string"].iloc[0]
                         # Populate metadata for validation
-                        metadata['tag_string_general'] = row.get('tag_string_general', pd.Series([''])).iloc[0]
-                        metadata['tag_count_character'] = row.get('tag_count_character', pd.Series([None])).iloc[0]
+                        metadata["tag_string_general"] = row.get(
+                            "tag_string_general", pd.Series([""])
+                        ).iloc[0]
+                        metadata["tag_count_character"] = row.get(
+                            "tag_count_character", pd.Series([None])
+                        ).iloc[0]
                 except Exception:
-                    pass # Fallback to file reading
+                    pass  # Fallback to file reading
             else:
-                logger.warning(f"Prompt file not found for {img_path}, using empty prompt.")
+                logger.warning(
+                    f"Prompt file not found for {img_path}, using empty prompt."
+                )
 
         except Exception as e:
-            logger.warning(f"Error reading prompt file {prompt_path}: {e}. Using empty prompt.")
-            prompt = "" # Use empty prompt on error
+            logger.warning(
+                f"Error reading prompt file {prompt_path}: {e}. Using empty prompt."
+            )
+            prompt = ""  # Use empty prompt on error
 
-        metadata['original_prompt'] = prompt
+        metadata["original_prompt"] = prompt
 
         # Construct full image path if global_path is set
         img_path_open = img_path
         if self.global_path:
             # Ensure correct path separators if needed
-            img_path_corrected = str(img_path).replace('\\', os.sep)
+            img_path_corrected = str(img_path).replace("\\", os.sep)
             img_path_open = os.path.join(self.global_path, img_path_corrected)
-            img_path_open = Path(img_path_open) # Convert back to Path if needed
+            img_path_open = Path(img_path_open)  # Convert back to Path if needed
 
         if not img_path_open.exists():
             logger.warning(f"Image file not found: {img_path_open}. Skipping.")
-            return None # Signal error
+            return None  # Signal error
 
         try:
             # Load image using PIL
-            image = Image.open(img_path_open).convert('RGB')
+            image = Image.open(img_path_open).convert("RGB")
 
             # Preprocess the image specifically for the tagger
             image_tensor = self._preprocess_for_tagger(image)
@@ -209,19 +215,21 @@ class TaggerDataset(Dataset):
             return image_tensor, prompt, img_path, metadata
 
         except (IOError, OSError, Image.DecompressionBombError) as e:
-            logger.warning(f"Error loading/processing image {img_path_open}: {e}. Skipping.")
-            return None # Signal error
+            logger.warning(
+                f"Error loading/processing image {img_path_open}: {e}. Skipping."
+            )
+            return None  # Signal error
         except Exception as e:
             # Catch unexpected errors during preprocessing or loading
             logger.error(
-                f"Unexpected error for image {img_path_open}: {e}",
-                exc_info=True
+                f"Unexpected error for image {img_path_open}: {e}", exc_info=True
             )
-            return None # Signal error
+            return None  # Signal error
+
 
 # Define the custom collate function
 def custom_collate_with_paths(
-    batch: List[Optional[Any]]
+    batch: List[Optional[Any]],
 ) -> Optional[Tuple[torch.Tensor, List[str], List[Path]]]:
     """
     Custom collate function that handles batches containing
@@ -258,10 +266,10 @@ def custom_collate_with_paths(
         components = list(zip(*filtered_batch))
 
         # Unpack the components
-        image_tensors = components[0] # Tuple of tensors
-        prompts = components[1]       # Tuple of strings
-        img_paths = components[2]     # Tuple of Path objects
-        metadata = components[3]      # Tuple of Dicts
+        image_tensors = components[0]  # Tuple of tensors
+        prompts = components[1]  # Tuple of strings
+        img_paths = components[2]  # Tuple of Path objects
+        metadata = components[3]  # Tuple of Dicts
 
         # Collate tensors using default_collate:
         # This stacks the individual tensors into a single batch tensor.
@@ -282,16 +290,19 @@ def custom_collate_with_paths(
         logger.error(f"Error during custom collation: {e}", exc_info=True)
         # Log details about the batch structure if helpful for debugging
         if filtered_batch:
-             first_item = filtered_batch[0]
-             # Check if the first item is a tuple as expected
-             if isinstance(first_item, tuple):
-                 item_types = [type(comp) for comp in first_item]
-                 logger.error(f"Problematic batch structure (first item types): "
-                              f"{item_types}")
-             else:
-                 logger.error(f"Problematic batch structure (first item type): "
-                              f"{type(first_item)}")
-        return None # Return None on error
+            first_item = filtered_batch[0]
+            # Check if the first item is a tuple as expected
+            if isinstance(first_item, tuple):
+                item_types = [type(comp) for comp in first_item]
+                logger.error(
+                    f"Problematic batch structure (first item types): {item_types}"
+                )
+            else:
+                logger.error(
+                    f"Problematic batch structure (first item type): {type(first_item)}"
+                )
+        return None  # Return None on error
+
 
 def combine_prompts_intelligently(
     original_prompt: str,
@@ -311,9 +322,7 @@ def combine_prompts_intelligently(
     """
     # 1. Normalize original tags for robust comparison.
     #    We preserve the original list to maintain user's formatting.
-    original_tags_list = [
-        t.strip() for t in original_prompt.split(',') if t.strip()
-    ]
+    original_tags_list = [t.strip() for t in original_prompt.split(",") if t.strip()]
     # 2. Parse original tags ONCE to identify existing concepts and counts.
     #    This is far more efficient and robust than repeated checks.
     existing_concepts = set()
@@ -325,9 +334,9 @@ def combine_prompts_intelligently(
         if PERSON_COUNT_REGEX.match(tag):
             has_person_count = True
         # An attribute tag typically has an underscore.
-        if ' ' in tag:
+        if " " in tag:
             # The concept is the part after the last underscore.
-            concept = tag.rsplit(' ', 1)[-1]
+            concept = tag.rsplit(" ", 1)[-1]
             existing_concepts.add(concept)
     # 3. Filter new tags to avoid conflicts and duplicates.
     tags_to_add = []
@@ -344,25 +353,25 @@ def combine_prompts_intelligently(
             continue
 
         # Check for concept conflict (e.g., 'hair', 'eyes', 'skirt').
-        if ' ' in normalized_new_tag:
-            concept = normalized_new_tag.rsplit(' ', 1)[-1]
+        if " " in normalized_new_tag:
+            concept = normalized_new_tag.rsplit(" ", 1)[-1]
             if concept in existing_concepts:
                 continue
 
         # If no conflicts, add the tag (formatted with spaces).
-        tags_to_add.append(new_tag)#.replace('_', ' '))
+        tags_to_add.append(new_tag)  # .replace('_', ' '))
 
     # 4. Combine and return the final prompt.
     #    This preserves the original tags and appends the new, filtered ones.
     final_tags = original_tags_list + tags_to_add
-    return ", ".join(filter(None, final_tags)),  ", ".join(filter(None, tags_to_add))
+    return ", ".join(filter(None, final_tags)), ", ".join(filter(None, tags_to_add))
 
 
 def upsample_prompts_batch(
     dataset_root: str,
     tagger_model_path: str,
     output_csv_path: str,
-    tagger_device: str = 'cuda',
+    tagger_device: str = "cuda",
     tag_threshold: float = 0.35,
     batch_size: int = 32,
     num_workers: int = 4,
@@ -373,6 +382,7 @@ def upsample_prompts_batch(
     global_path: Optional[str] = None,
     label_ext: str = ".txt",
     skip_rating: bool = False,
+    only_general_tags: bool = False,
     booru_df_path: Optional[str] = None,
 ):
     """
@@ -406,12 +416,10 @@ def upsample_prompts_batch(
     try:
         # Initialize the Tagger class (loads model once)
         tagger = Tagger(
-            model_dir=tagger_model_path,
-            device=tagger_device,
-            threshold=tag_threshold
+            model_dir=tagger_model_path, device=tagger_device, threshold=tag_threshold
         )
         # Get tagger's expected input details for the dataset
-        tagger_input_size = tagger.input_size # (H, W)
+        tagger_input_size = tagger.input_size  # (H, W)
         # Assuming standard mean/std, adjust if tagger config specifies otherwise
         tagger_means = tagger.expected_processor_config["image_mean"]
         tagger_stds = tagger.expected_processor_config["image_std"]
@@ -441,22 +449,23 @@ def upsample_prompts_batch(
         logger.warning("Dataset is empty. No prompts to upsample.")
         return
 
-    logger.info(f"Setting up DataLoader with batch_size={batch_size}, "
-                f"num_workers={num_workers}")
-    pin_memory = (tagger_device == 'cuda') and torch.cuda.is_available()
+    logger.info(
+        f"Setting up DataLoader with batch_size={batch_size}, num_workers={num_workers}"
+    )
+    pin_memory = (tagger_device == "cuda") and torch.cuda.is_available()
     loader_kwargs = {
-        'batch_size': batch_size,
-        'shuffle': False,
-        'num_workers': num_workers,
-        'collate_fn': custom_collate_with_paths,
-        'pin_memory': pin_memory,
-        'drop_last': False,
+        "batch_size": batch_size,
+        "shuffle": False,
+        "num_workers": num_workers,
+        "collate_fn": custom_collate_with_paths,
+        "pin_memory": pin_memory,
+        "drop_last": False,
     }
     # Add prefetch_factor and persistent_workers if supported
     # Use getattr for safer check across PyTorch versions
-    if getattr(DataLoader, 'prefetch_factor', None) is not None:
-         loader_kwargs['prefetch_factor'] = dataloader_prefetch_factor
-    loader_kwargs['persistent_workers'] = (
+    if getattr(DataLoader, "prefetch_factor", None) is not None:
+        loader_kwargs["prefetch_factor"] = dataloader_prefetch_factor
+    loader_kwargs["persistent_workers"] = (
         dataloader_persistent_workers if num_workers > 0 else False
     )
 
@@ -472,7 +481,7 @@ def upsample_prompts_batch(
         if batch is None:
             logger.warning("Skipping an empty or invalid batch (collate error).")
             skipped_batches += 1
-            error_count += batch_size # Estimate errors for the skipped batch
+            error_count += batch_size  # Estimate errors for the skipped batch
             continue
 
         # Unpack batch - custom_collate_with_paths yields (tensor, [prompt], [path], [metadata])
@@ -486,16 +495,16 @@ def upsample_prompts_batch(
             logger.error(f"Error unpacking batch: {e}. Skipping batch.")
             # Log details about the batch structure that caused the error
             if isinstance(batch, (list, tuple)) and len(batch) > 0:
-                 logger.error(f"Batch structure: {[type(item) for item in batch]}")
+                logger.error(f"Batch structure: {[type(item) for item in batch]}")
             else:
-                 logger.error(f"Batch type: {type(batch)}")
+                logger.error(f"Batch type: {type(batch)}")
             # Estimate errors based on expected batch size
             error_count += batch_size
             continue
 
         # Get scores for the batch of tensors
         # tagger.tag_batch returns Optional[np.ndarray] of shape [B, num_tags]
-        batch_scores_np = tagger.tag_batch(image_tensors) # Pass tensors now
+        batch_scores_np = tagger.tag_batch(image_tensors)  # Pass tensors now
 
         # Check if the entire batch inference failed
         if batch_scores_np is None:
@@ -509,12 +518,14 @@ def upsample_prompts_batch(
                     output_path = img_path.parent / output_filename
                     try:
                         output_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(output_path, 'w', encoding='utf-8') as f:
-                            f.write(prompts[i]) # Save original prompt
+                        with open(output_path, "w", encoding="utf-8") as f:
+                            f.write(prompts[i])  # Save original prompt
                     except Exception as e:
-                        logger.error(f"Error writing original prompt on batch fail"
-                                     f" for {output_path}: {e}")
-            continue # Move to the next batch
+                        logger.error(
+                            f"Error writing original prompt on batch fail"
+                            f" for {output_path}: {e}"
+                        )
+            continue  # Move to the next batch
 
         # Process each item in the batch
         for i in range(len(prompts)):
@@ -528,16 +539,18 @@ def upsample_prompts_batch(
             # Check if 'original' is in the prompt to determine if we
             # should skip character tags.
             normalized_original_tags = {
-                t.strip() for t in original_prompt.lower().split(',')
+                t.strip() for t in original_prompt.lower().split(",")
             }
             # character and copyrights should be omitted and trust danbooru
-            skip_chars = 'original' in normalized_original_tags
+            # Force skip characters if only_general_tags is True
+            if only_general_tags:
+                skip_chars = True
+            else:
+                skip_chars = "original" in normalized_original_tags
 
             # Convert scores to tags based on threshold
             new_tags = tagger.get_tags_from_scores(
-                image_scores,
-                skip_rating=skip_rating,
-                skip_character_tags=skip_chars
+                image_scores, skip_rating=skip_rating, skip_character_tags=skip_chars
             )
 
             final_prompt, upsampled_tags = combine_prompts_intelligently(
@@ -546,15 +559,9 @@ def upsample_prompts_batch(
 
             # Validate and clean the upsampled tags using metadata and heuristics
             # This filters out hallucinations (e.g. extra hair colors, conflicting clothes)
-            upsampled_tags = validate_upsampled_batch(
-                upsampled_tags,
-                row_metadata
-            )
+            upsampled_tags = validate_upsampled_batch(upsampled_tags, row_metadata)
 
-            results.append({
-                "id": img_path.stem,
-                "upsampled_tags": upsampled_tags
-            })
+            results.append({"id": img_path.stem, "upsampled_tags": upsampled_tags})
 
             # Define the output path
             output_filename = img_path.stem + output_suffix + ".txt"
@@ -563,21 +570,22 @@ def upsample_prompts_batch(
             # Save the upsampled prompt (even if empty, might be intended)
             try:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, 'w', encoding='utf-8') as f:
+                with open(output_path, "w", encoding="utf-8") as f:
                     f.write(upsampled_tags)
                 processed_count += 1
             except IOError as e:
                 logger.error(f"Error writing prompt file {output_path}: {e}")
                 error_count += 1
             except Exception as e:
-                 logger.error(f"Unexpected error saving {output_path}: {e}",
-                              exc_info=True)
-                 error_count += 1
+                logger.error(
+                    f"Unexpected error saving {output_path}: {e}", exc_info=True
+                )
+                error_count += 1
 
         # Optional: Clear tensor variables to potentially free GPU memory sooner
         del image_tensors, batch_scores_np, batch
-        if tagger_device == 'cuda':
-            torch.cuda.empty_cache() # Use with caution, can slow things down
+        if tagger_device == "cuda":
+            torch.cuda.empty_cache()  # Use with caution, can slow things down
 
     logger.info(f"Prompt upsampling finished.")
     logger.info(f"Successfully processed and saved: {processed_count} prompts.")
@@ -599,44 +607,89 @@ def upsample_prompts_batch(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Upsample dataset prompts using a tagger.")
-    parser.add_argument("--data_root", type=str, required=True,
-                        help="Root directory of the dataset images and prompts.")
-    parser.add_argument("--output_csv_path", type=str, required=True,
-                        help="Path to save the output CSV file.")
-    parser.add_argument("--tagger_model_dir", type=str, default="model/wd_swinv2",
-                        help="Directory containing the tagger model files.")
-    parser.add_argument("--device", type=str, default="cuda", choices=['cuda', 'cpu'],
-                        help="Device for tagger inference ('cuda' or 'cpu').")
-    parser.add_argument("--batch_size", type=int, default=32,
-                        help="Batch size for processing.")
-    parser.add_argument("--num_workers", type=int, default=4,
-                        help="Number of DataLoader workers.")
-    parser.add_argument("--tag_threshold", type=float, default=0.35,
-                        help="Confidence threshold for tags.")
-    parser.add_argument("--output_suffix", type=str, default="_upsampled",
-                        help="Suffix for output prompt filenames.")
-    parser.add_argument("--save_original_on_error", action='store_true',
-                        help="Save original prompt if tagging fails for an image.")
-    parser.add_argument("--global_path", type=str, default=None,
-                        help="Optional global path prefix for dataset images.")
-    parser.add_argument("--label_ext", type=str, default=".txt",
-                        help="Extension for prompt files.")
-    parser.add_argument("--prefetch_factor", type=int, default=2,
-                        help="DataLoader prefetch factor.")
-    parser.add_argument("--persistent_workers", action=argparse.BooleanOptionalAction, # Use new action for bool flags
-                        default=True, help="Use persistent DataLoader workers.")
-    parser.add_argument("--skip_rating", action=argparse.BooleanOptionalAction, # Use new action for bool flags
-                        default=True, help="Skip the rating prediction")
+    parser = argparse.ArgumentParser(
+        description="Upsample dataset prompts using a tagger."
+    )
+    parser.add_argument(
+        "--data_root",
+        type=str,
+        required=True,
+        help="Root directory of the dataset images and prompts.",
+    )
+    parser.add_argument(
+        "--output_csv_path",
+        type=str,
+        required=True,
+        help="Path to save the output CSV file.",
+    )
+    parser.add_argument(
+        "--tagger_model_dir",
+        type=str,
+        default="model/wd_swinv2",
+        help="Directory containing the tagger model files.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda",
+        choices=["cuda", "cpu"],
+        help="Device for tagger inference ('cuda' or 'cpu').",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=32, help="Batch size for processing."
+    )
+    parser.add_argument(
+        "--num_workers", type=int, default=4, help="Number of DataLoader workers."
+    )
+    parser.add_argument(
+        "--tag_threshold",
+        type=float,
+        default=0.35,
+        help="Confidence threshold for tags.",
+    )
+    parser.add_argument(
+        "--output_suffix",
+        type=str,
+        default="_upsampled",
+        help="Suffix for output prompt filenames.",
+    )
+    parser.add_argument(
+        "--save_original_on_error",
+        action="store_true",
+        help="Save original prompt if tagging fails for an image.",
+    )
+    parser.add_argument(
+        "--global_path",
+        type=str,
+        default=None,
+        help="Optional global path prefix for dataset images.",
+    )
+    parser.add_argument(
+        "--label_ext", type=str, default=".txt", help="Extension for prompt files."
+    )
+    parser.add_argument(
+        "--prefetch_factor", type=int, default=2, help="DataLoader prefetch factor."
+    )
+    parser.add_argument(
+        "--persistent_workers",
+        action=argparse.BooleanOptionalAction,  # Use new action for bool flags
+        default=True,
+        help="Use persistent DataLoader workers.",
+    )
+    parser.add_argument(
+        "--skip_rating",
+        action=argparse.BooleanOptionalAction,  # Use new action for bool flags
+        default=True,
+        help="Skip the rating prediction",
+    )
     parser.add_argument("--booru_df_path", type=str, help="Path to the booru parquets")
-
 
     args = parser.parse_args()
 
     # Ensure CUDA is available if selected
-    if args.device == 'cuda' and not torch.cuda.is_available():
+    if args.device == "cuda" and not torch.cuda.is_available():
         logger.warning("CUDA selected but not available. Switching to CPU.")
-        args.device = 'cpu'
+        args.device = "cpu"
 
     # Run the upsampling process
     upsample_prompts_batch(

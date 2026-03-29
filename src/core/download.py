@@ -8,17 +8,19 @@ import threading
 from pathlib import Path
 from typing import List, Optional
 
+
 class Downloader:
     """
     Handles the downloading of images from URLs specified in a DataFrame.
     """
+
     def __init__(
         self,
         max_workers: int = 8,
         timeout: int = 10,
-        max_downloads: int= 50000,
+        max_downloads: int = 50000,
         retry_attempts: int = 3,
-        initial_retry_delay: int = 1
+        initial_retry_delay: int = 1,
     ):
         """
         Initializes the downloader.
@@ -46,26 +48,42 @@ class Downloader:
         row,
         headers,
         output_dir,
-        character_list: Optional[List[str]] = None
+        character_list: Optional[List[str]] = None,
     ):
         """
         Downloads a single image with a retry mechanism for transient errors.
         Returns the relative path on success, None on failure.
         """
         url = row.get("large_file_url", "")
-        img_width = row.get('image_width', 0)
-        img_height =  row.get('image_height', 0)
+        # Pandas Series.get() returns NaN if the column exists but is empty.
+        # We need to explicitly check for NaN or non-string values.
+        if pd.isna(url) or not isinstance(url, str):
+            url = ""
+
+        file_url = row.get("file_url", "")
+        if pd.isna(file_url) or not isinstance(file_url, str):
+            file_url = ""
+
+        img_w_raw = row.get("image_width", 0)
+        img_width = int(img_w_raw) if pd.notna(img_w_raw) and img_w_raw else 0
+
+        img_h_raw = row.get("image_height", 0)
+        img_height = int(img_h_raw) if pd.notna(img_h_raw) and img_h_raw else 0
+
         # if small file is too small, we use the original size
-        if len(url) == 0 or img_width * img_height <= 768**2 or img_height <= 1200 :
-            url = row.get("file_url", "")
+        if len(url) == 0 or img_width * img_height <= 768**2 or img_height <= 1200:
+            url = file_url
 
         if not url or not isinstance(url, str):
             print(f"Skipping row {index} due to invalid URL.")
-            return False
+            return None
 
         valid_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
         quality2id = {
-            'masterpiece': 3, 'good_score': 2, 'bad_score': 1, 'worse_score': 0
+            "masterpiece": 3,
+            "good_score": 2,
+            "bad_score": 1,
+            "worse_score": 0,
         }
 
         # Determine class_id and create filename
@@ -74,7 +92,7 @@ class Downloader:
         elif "quality_tier" in row.index:
             class_id = quality2id.get(row["quality_tier"], 0)
         else:
-            class_id = 0 # Default class
+            class_id = 0  # Default class
 
         # Determine Sub-directory based on Character
         # Default folder is just the class_id
@@ -118,10 +136,13 @@ class Downloader:
         for attempt in range(self.retry_attempts):
             start_time = time.time()
             try:
-                cookies = {'cf_clearance': self.cf_clearance_cookie}
+                cookies = {"cf_clearance": self.cf_clearance_cookie}
                 response = requests.get(
-                    url, stream=True, timeout=self.timeout, headers=headers,
-                    cookies=cookies
+                    url,
+                    stream=True,
+                    timeout=self.timeout,
+                    headers=headers,
+                    cookies=cookies,
                 )
                 response.raise_for_status()
 
@@ -136,10 +157,7 @@ class Downloader:
                 os.rename(temp_file, save_path)
                 elapsed = time.time() - start_time
                 speed = (file_size / 1024) / elapsed if elapsed > 0 else 0
-                print(
-                    f"Downloaded: {save_path} in {elapsed:.2f}s "
-                    f"({speed:.2f} KB/s)"
-                )
+                print(f"Downloaded: {save_path} in {elapsed:.2f}s ({speed:.2f} KB/s)")
                 time.sleep(0.35)
                 return relative_path  # Success
 
@@ -162,7 +180,7 @@ class Downloader:
                 print(f"Unexpected error for id {id} ({url}): {e}")
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
-                return None # Do not retry on other errors
+                return None  # Do not retry on other errors
         return None
 
     def download_images(
@@ -172,7 +190,7 @@ class Downloader:
         csv_path: str,
         output_csv_path: str,
         start_index: int = 0,
-        character_list: Optional[List[str]] = None
+        character_list: Optional[List[str]] = None,
     ) -> list:
         """
         Download images from the dataframe to the specified output directory.
@@ -195,8 +213,8 @@ class Downloader:
         os.makedirs(output_dir, exist_ok=True)
 
         # Add 'relative_path' column if it doesn't exist
-        if 'relative_path' not in df.columns:
-            df['relative_path'] = None
+        if "relative_path" not in df.columns:
+            df["relative_path"] = None
 
         # if there is characters, they will be created dynamically
         if len(character_list) == 0:
@@ -214,11 +232,10 @@ class Downloader:
         else:
             df_subset = df.iloc[start_index:]
 
-
         download_count = 0
         failed_indices = []
         lock = threading.Lock()
-        headers = None#{'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'} # Add User-Agent
+        headers = None  # {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'} # Add User-Agent
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit download tasks using the new retry-enabled method
@@ -229,11 +246,10 @@ class Downloader:
                     row,
                     headers,
                     output_dir,
-                    character_list
+                    character_list,
                 ): index
                 for index, row in df_subset.iterrows()
             }
-
 
             print(f"Submitted {len(futures)} download tasks.")
             for future in as_completed(futures):
@@ -243,24 +259,20 @@ class Downloader:
                     if relative_path:
                         download_count += 1
                         # Update DataFrame with the relative path
-                        df.loc[index, 'relative_path'] = relative_path
+                        df.loc[index, "relative_path"] = relative_path
                     else:
                         failed_indices.append(index)
 
-            print(
-                "Finished. Successful downloads in this run: "
-                f"{download_count}"
-            )
+            print(f"Finished. Successful downloads in this run: {download_count}")
 
         if failed_indices:
             print(f"\nDropping {len(failed_indices)} failed download entries.")
             # df.drop(failed_indices, inplace=True)
-            missing_ids = df.loc[failed_indices, 'id']
+            missing_ids = df.loc[failed_indices, "id"]
 
-            exclude_df = pd.DataFrame(list(missing_ids), columns=['id'])
+            exclude_df = pd.DataFrame(list(missing_ids), columns=["id"])
             Path(output_csv_path).parent.mkdir(parents=True, exist_ok=True)
             exclude_df.to_csv(output_csv_path, index=False)
-
 
         # Always save the DataFrame to persist new relative_path values
         # and remove rows for failed downloads.

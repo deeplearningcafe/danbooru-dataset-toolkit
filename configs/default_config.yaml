@@ -1,11 +1,11 @@
 # --- Global Paths ---
+experiment_name: "evangelion"
 data_root: /StableDifussion/
 parquet_path: /danbooru/parquets
 download_dir: "/danbooru_dataset"
 models_dir: "models/"
 device: "cuda"
 num_parquets: 1
-debug_tags_csv: "debug_tags.csv"
 
 # --- Dataset Creation ---
 prior_data:
@@ -48,6 +48,7 @@ sampling:
         k-on!: 4.5
 
     character_list: []
+    artist_list: []
 
 # --- Download Parameters ---
 download:
@@ -82,7 +83,7 @@ prompts:
 prompt_upsampling:
     tagger_model_dir: "models/wd_swinv2"
     upsampled_tags_path: "upsampled_tags.csv"
-    tag_threshold: 0.35
+    tag_threshold: 0.40
 
 # --- Latent Encoding Parameters ---
 latent_encoding:
@@ -93,7 +94,7 @@ latent_encoding:
     vae_path: "/models/vae/diffusion_pytorch_model.safetensors"
     clip_path: "/models/clip/model.safetensors"
     # Encoding and performance settings
-    samples_per_shard: 20000
+    samples_per_shard: 24000
     batch_size: 4
     num_workers: 12
     length_tiers: [77, 152, 227]
@@ -101,3 +102,10 @@ latent_encoding:
     cache_text_embeds: false
     store_tokenized_captions: true
     min_sample_count: 8
+
+face_cropping:
+    model_path: "anime-dataset/face_yolov8n.pt"
+    output_dir: "danbooru_faces"
+    min_resolution: 256
+    batch_size: 128
+
