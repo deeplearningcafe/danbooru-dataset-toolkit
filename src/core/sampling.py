@@ -125,6 +125,7 @@ def create_quality_tiers(
     quality_tags_list: Optional[List[str]] = None,
     single_characters: Optional[bool] = False,
     reports_dir: str = "reports",
+    artist_tags: Optional[set] = None,
     verbose: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
@@ -148,6 +149,8 @@ def create_quality_tiers(
                                                  higher quality (e.g., "highres").
         single_characters (bool, optional): if true then samples with 1 single
                                                 character will be sampled.
+        artist_tags (set, optional): Set of artist tags to protect from
+                                     parent/child deduplication.
         verbose (bool): Whether to print info about the tiers and processing.
 
     Returns:
@@ -230,7 +233,7 @@ def create_quality_tiers(
         image_pixels = df_processed["image_width"] * df_processed["image_height"]
         # Define the minimum resolution threshold.
         # we must use a lower than 500x500 to include low_res samples
-        min_resolution = 384 * 384
+        min_resolution = 512 * 512
         # Filter out images with a pixel count below the threshold.
         df_processed = df_processed[image_pixels >= min_resolution]
         if verbose:
@@ -265,6 +268,16 @@ def create_quality_tiers(
                 f"With {len(children_df)} childs samples."
             )
         ids_to_drop = []
+
+        # Identify artist samples to protect them from deduplication
+        protected_ids = set()
+        if artist_tags and "tag_string_artist" in df_processed.columns:
+            escaped_artists = [re.escape(t) for t in artist_tags]
+            artist_pattern = r"(?:^|\s)(" + "|".join(escaped_artists) + r")(?:$|\s)"
+            artist_mask = df_processed["tag_string_artist"].str.contains(
+                artist_pattern, regex=True, na=False
+            )
+            protected_ids = set(df_processed.loc[artist_mask, "id"])
 
         # For performance, create a lookup table for parent rows instead of
         # searching the full dataframe in each iteration of the loop.
@@ -321,7 +334,12 @@ def create_quality_tiers(
                         ids_to_drop.append(child_id)
 
         if ids_to_drop:
-            df_processed = df_processed[~df_processed["id"].isin(ids_to_drop)]
+            # Filter out protected IDs (artists) from being dropped
+            if protected_ids:
+                ids_to_drop = [i for i in ids_to_drop if i not in protected_ids]
+
+            if ids_to_drop:
+                df_processed = df_processed[~df_processed["id"].isin(ids_to_drop)]
 
         # Clean up the temporary column used for the logic.
         df_processed = df_processed.drop(columns=["tag_count"])
@@ -331,6 +349,7 @@ def create_quality_tiers(
             print(
                 f"Processed parent/child relationships, removing "
                 f"{removed_count} child images based on new logic. "
+                f"{len(protected_ids)} ids that were from artists and protected"
                 f"Size: {len(df_processed)}"
             )
 
@@ -1108,6 +1127,7 @@ def filter_and_sample_by_quality(
         masterpiece_prior, good_prior, bad_prior, worse_prior = create_quality_tiers(
             prior_knowledge_samples,
             single_characters=single_characters,
+            artist_tags=artist_tags,
             verbose=verbose,
         )
 
@@ -1142,8 +1162,14 @@ def filter_and_sample_by_quality(
 
         # Ensure artist_tags are available and the necessary column exists
         if artist_tags and "tag_string_artist" in masterpiece_prior.columns:
+            # Use regex instead of .isin() to handle space-separated artists
+            escaped_artists = [re.escape(t) for t in artist_tags]
+            artist_pattern = r"(?:^|\s)(" + "|".join(escaped_artists) + r")(?:$|\s)"
+
             # 1. Split the Masterpiece Tier
-            is_artist_mask_mp = masterpiece_prior["tag_string_artist"].isin(artist_tags)
+            is_artist_mask_mp = masterpiece_prior["tag_string_artist"].str.contains(
+                artist_pattern, regex=True, na=False
+            )
             masterpiece_prior_artists = masterpiece_prior[is_artist_mask_mp].copy()
             masterpiece_prior_artists["quality_tier"] = masterpiece_prior_artists[
                 "quality_label"
@@ -1154,20 +1180,26 @@ def filter_and_sample_by_quality(
             ]
 
             # 2. Split the Good Score Tier
-            is_artist_mask_good = good_prior["tag_string_artist"].isin(artist_tags)
+            is_artist_mask_good = good_prior["tag_string_artist"].str.contains(
+                artist_pattern, regex=True, na=False
+            )
             good_prior_artists = good_prior[is_artist_mask_good].copy()
             good_prior_artists["quality_tier"] = good_prior_artists["quality_label"]
             good_prior_chars = good_prior[~is_artist_mask_good].copy()
             good_prior_chars["quality_tier"] = good_prior_chars["quality_label"]
 
             # 3. Split the Bad Score Tier
-            is_artist_mask_bad = bad_prior["tag_string_artist"].isin(artist_tags)
+            is_artist_mask_bad = bad_prior["tag_string_artist"].str.contains(
+                artist_pattern, regex=True, na=False
+            )
             bad_prior_artists = bad_prior[is_artist_mask_bad].copy()
             bad_prior_chars = bad_prior[~is_artist_mask_bad].copy()
             bad_prior_chars["quality_tier"] = bad_prior_chars["quality_label"]
 
             # 4. Split the Worse Score Tier
-            is_artist_mask_worse = worse_prior["tag_string_artist"].isin(artist_tags)
+            is_artist_mask_worse = worse_prior["tag_string_artist"].str.contains(
+                artist_pattern, regex=True, na=False
+            )
             worse_prior_artists = worse_prior[is_artist_mask_worse].copy()
             worse_prior_chars = worse_prior[~is_artist_mask_worse].copy()
             worse_prior_chars["quality_tier"] = worse_prior_chars["quality_label"]
@@ -1320,6 +1352,7 @@ def filter_and_sample_by_quality(
             df,
             single_characters=single_characters,
             reports_dir=reports_dir,
+            artist_tags=artist_tags,
             verbose=verbose,
         )
         # always include first the characters and the rest of the

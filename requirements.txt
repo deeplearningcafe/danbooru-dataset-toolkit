@@ -16,3 +16,4 @@ torchvision==0.23.0+cu126
 tqdm==4.67.1
 transformers==4.50.0
 typer==0.12.5
+curl-cffi==0.15.0

@@ -15,7 +15,7 @@ class TagWeighter:
         min_weight: float = 0.25,
         max_weight: float = 2.0,
         smoothing_factor: float = 0.05,
-        prior_multiplier_artists: float = 1.35,
+        prior_multiplier_artists: float = 1.55,
         prior_multiplier_chars: float = 1.15,
     ):
         """
@@ -62,7 +62,6 @@ class TagWeighter:
         self.prior_artists = set()
         self.prior_characters = set()
 
-
         # Load, process, and compute weights from the provided CSV
         try:
             self._load_and_process_tags(tag_counts_csv_path)
@@ -77,34 +76,28 @@ class TagWeighter:
             print(f"Failed to initialize TagWeighter: {e}")
             raise
 
-    def _load_priors(
-        self,
-        artists_path: Optional[str],
-        characters_path: Optional[str]
-    ):
+    def _load_priors(self, artists_path: Optional[str], characters_path: Optional[str]):
         """Load prioritized artists and characters from text files."""
         if artists_path:
             print(f"Loading prioritized artists from {artists_path}...")
-            with open(artists_path, 'r', encoding='utf-8') as f:
+            with open(artists_path, "r", encoding="utf-8") as f:
                 self.prior_artists = {
-                    format_danbooru_tag(line.strip())
-                    for line in f if line.strip()
+                    format_danbooru_tag(line.strip()) for line in f if line.strip()
                 }
             print(f"Loaded {len(self.prior_artists)} prioritized artists.")
 
         if characters_path:
             print(f"Loading prioritized characters from {characters_path}...")
             if characters_path.endswith(".txt"):
-                with open(characters_path, 'r', encoding='utf-8') as f:
+                with open(characters_path, "r", encoding="utf-8") as f:
                     self.prior_characters = {
-                        format_danbooru_tag(line.strip())
-                        for line in f if line.strip()
+                        format_danbooru_tag(line.strip()) for line in f if line.strip()
                     }
             # Process .xlsx files for characters
             elif characters_path.endswith(".xlsx"):
                 char_df = pd.read_excel(characters_path)
-                if 'character_tag' in char_df.columns:
-                    for char_tag in char_df['character_tag'].dropna():
+                if "character_tag" in char_df.columns:
+                    for char_tag in char_df["character_tag"].dropna():
                         # Add only if tag is valid and not already present
                         if char_tag:
                             # already in booru format.
@@ -118,16 +111,14 @@ class TagWeighter:
         df = pd.read_csv(csv_path)
 
         # Ensure required columns exist
-        if not {'tag', 'category', 'count'}.issubset(df.columns):
-            raise ValueError(
-                "CSV must contain 'tag', 'category', and 'count' columns."
-            )
+        if not {"tag", "category", "count"}.issubset(df.columns):
+            raise ValueError("CSV must contain 'tag', 'category', and 'count' columns.")
 
         # Filter for the categories we care about
-        df = df[df['category'].isin(self.categories)]
+        df = df[df["category"].isin(self.categories)]
 
         for _, row in df.iterrows():
-            tag, category, count = row['tag'], row['category'], int(row['count'])
+            tag, category, count = row["tag"], row["category"], int(row["count"])
             if category in self.categories:
                 # Store the count for the tag within its category
                 self.tag_counts[category][tag] = count
@@ -141,7 +132,7 @@ class TagWeighter:
         """
         print("Computing weights for all tags...")
         min_max_diff = self.max_weight - self.min_weight
-        
+
         for category in self.categories:
             category_counts = self.tag_counts[category]
             if not category_counts:
@@ -168,15 +159,14 @@ class TagWeighter:
             # range, providing stability during training.
             min_w, max_w = np.min(weights), np.max(weights)
             if max_w > min_w:
-                normalized_weights = self.min_weight + (
-                    (weights - min_w) / (max_w - min_w)
-                ) * min_max_diff
+                normalized_weights = (
+                    self.min_weight
+                    + ((weights - min_w) / (max_w - min_w)) * min_max_diff
+                )
             else:
                 # If all weights are the same, assign the default
-                normalized_weights = np.full_like(
-                    weights, self.default_weight
-                )
-            
+                normalized_weights = np.full_like(weights, self.default_weight)
+
             # Clip weights to enforce the absolute min/max boundaries
             final_weights = np.clip(
                 normalized_weights, self.min_weight, self.max_weight
@@ -212,7 +202,7 @@ class TagWeighter:
         category_wise_weights: Dict[str, List[float]] = defaultdict(list)
 
         # Normalize tags: comma-separated and spaces inside tags
-        tags = [tag.strip() for tag in caption.split(',') if tag.strip()]
+        tags = [tag.strip() for tag in caption.split(",") if tag.strip()]
 
         for tag in tags:
             # Fast lookup for tag's category
@@ -222,10 +212,10 @@ class TagWeighter:
                 weight = self.tag_weights[category].get(tag, self.default_weight)
 
                 # Apply prior multiplier for specified artists/characters
-                if category == 'artist' and tag in self.prior_artists:                
+                if category == "artist" and tag in self.prior_artists:
                     weight *= self.prior_multiplier_artists
                 # use if instead of elif to give higher weight artists and chars
-                if category == 'character' and tag in self.prior_characters:
+                if category == "character" and tag in self.prior_characters:
                     weight *= self.prior_multiplier_chars
                 # Clamp the weight to not exceed the max_weight
                 weight = min(weight, self.max_weight)
@@ -247,3 +237,4 @@ class TagWeighter:
         final_weight = np.exp(np.mean(np.log(category_means)))
 
         return float(final_weight)
+

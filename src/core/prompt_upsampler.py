@@ -101,6 +101,20 @@ class TaggerDataset(Dataset):
     def __len__(self) -> int:
         return len(self.image_paths)
 
+    def filter_processed_images(self, processed_ids: set):
+        """
+        Filters out image paths that have already been processed.
+
+        Args:
+            processed_ids (set): A set of image IDs (stems) that have already been processed.
+        """
+        initial_count = len(self.image_paths)
+        self.image_paths = [p for p in self.image_paths if p.stem not in processed_ids]
+        filtered_count = initial_count - len(self.image_paths)
+        logger.info(
+            f"Filtered {filtered_count} already processed images. {len(self.image_paths)} remaining."
+        )
+
     def _preprocess_for_tagger(self, image: Image.Image) -> torch.Tensor:
         """Preprocesses a PIL image for the tagger model."""
         # Convert PIL image (RGB) to numpy array (float32)

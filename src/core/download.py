@@ -8,6 +8,14 @@ import threading
 from pathlib import Path
 from typing import List, Optional
 
+HAS_CURL = False
+try:
+    from curl_cffi import requests as cffi_requests
+
+    HAS_CURL = True
+except ImportError:
+    print("curl_cffi couldn't be imported")
+
 
 class Downloader:
     """
@@ -41,6 +49,10 @@ class Downloader:
         self.retry_attempts = retry_attempts
         self.initial_retry_delay = initial_retry_delay
         self.cf_clearance_cookie = "YOUR-COOKIE"
+
+        session_class = cffi_requests.Session if HAS_CURL else requests.Session
+        session_kwargs = {"impersonate": "chrome"} if HAS_CURL else {}
+        self.session = session_class(**session_kwargs)
 
     def _download_image_with_retry(
         self,
@@ -137,7 +149,7 @@ class Downloader:
             start_time = time.time()
             try:
                 cookies = {"cf_clearance": self.cf_clearance_cookie}
-                response = requests.get(
+                response = self.session.get(
                     url,
                     stream=True,
                     timeout=self.timeout,
@@ -158,7 +170,7 @@ class Downloader:
                 elapsed = time.time() - start_time
                 speed = (file_size / 1024) / elapsed if elapsed > 0 else 0
                 print(f"Downloaded: {save_path} in {elapsed:.2f}s ({speed:.2f} KB/s)")
-                time.sleep(0.35)
+                time.sleep(0.5)
                 return relative_path  # Success
 
             except (requests.RequestException, TimeoutError) as e:

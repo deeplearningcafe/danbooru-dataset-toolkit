@@ -1302,13 +1302,27 @@ class LatentEncoder:
         #     f"Bucket tier sample counters {bucket_tier_sample_counters}"
         # )
 
-        # The dataset object now represents ONLY the NEW data to be added.
-        # We no longer exclude indices; we process the entire new dataset.
-        prompt_metadata = self.precompute_prompt_lengths_and_tiers(exclude_indices=None)
+        # CHANGED: Extract already processed indices to prevent re-encoding
+        # the previous implementation assumed that original samples were deleted
+        # from the root dir to reduce disk space
+        exclude_indices = set()
+        if all_sample_info:
+            processed_booru_ids = {str(s["booru_id"]) for s in all_sample_info}
+            for booru_id in processed_booru_ids:
+                if booru_id in self.dataset.booru_id_to_idx:
+                    exclude_indices.add(self.dataset.booru_id_to_idx[booru_id])
+            print(
+                f"Excluding {len(exclude_indices)} already processed samples from encoding."
+            )
+
+        # CHANGED: Pass exclude_indices to properly skip existing data
+        prompt_metadata = self.precompute_prompt_lengths_and_tiers(
+            exclude_indices=exclude_indices
+        )
 
         # Group samples from the NEW dataset.
         grouped_samples = self._group_samples_by_bucket_and_tier(
-            prompt_metadata, exclude_indices=None
+            prompt_metadata, exclude_indices=exclude_indices
         )
         print("Sample grouping complete.")
 

@@ -8,24 +8,29 @@ from collections import defaultdict
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
+import re
 from ..utils.loader import load_prior_knowledge_df
+from ..prompts.prompt_utils import format_danbooru_tag_inverse
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
+
 def is_image_file(path: Path) -> bool:
     """Check if a file has a common image extension."""
     return path.suffix.lower() in IMAGE_SUFFIXES
 
+
 def find_image_files(root_dir: Path) -> list[Path]:
     """Recursively find all image files in a directory."""
     image_paths = []
-    for p in tqdm(root_dir.rglob('*')):
+    for p in tqdm(root_dir.rglob("*")):
         if is_image_file(p):
             image_paths.append(p)
     return image_paths
+
 
 def _move_file_worker(src_path: Path, dest_path: Path):
     """Worker to move a single file and create its parent directory."""
@@ -35,8 +40,10 @@ def _move_file_worker(src_path: Path, dest_path: Path):
     except Exception as e:
         logger.error(f"Failed to move {src_path} to {dest_path}: {e}")
 
+
 class DSU:
     """Disjoint Set Union (Union-Find) data structure."""
+
     def __init__(self, n):
         self.parent = list(range(n))
 
@@ -51,6 +58,7 @@ class DSU:
         root_j = self.find(j)
         if root_i != root_j:
             self.parent[root_j] = root_i
+
 
 def _hash_batch_worker(paths: list[Path]):
     """
@@ -75,9 +83,8 @@ def _hash_batch_worker(paths: list[Path]):
 
     return batch_hashes, batch_valid_paths
 
-def _move_back_from_dedup(
-    src_path: Path, dedup_root: Path, original_root: Path
-):
+
+def _move_back_from_dedup(src_path: Path, dedup_root: Path, original_root: Path):
     """
     Moves a single file from a deduplication subfolder back to its
     inferred original location, along with its .txt file.
@@ -105,11 +112,10 @@ def _move_back_from_dedup(
             prompt_dest = dest_path.with_suffix(".txt")
             shutil.move(str(prompt_src), str(prompt_dest))
     except (ValueError, IndexError):
-        logger.warning(
-            f"Could not determine original path for {src_path}. Skipping."
-        )
+        logger.warning(f"Could not determine original path for {src_path}. Skipping.")
     except Exception as e:
         logger.error(f"Failed to move {src_path}: {e}")
+
 
 def automate_deduplication(
     deduplication_dir: str,
@@ -141,15 +147,16 @@ def automate_deduplication(
         print("Error: Sampled IDs file not found. Run sampling first.")
         return
     # merge to get the quality_tier
-    prior_knowledge_samples = pd.merge(prior_knowledge_samples, sampled_df[['id', 'quality_tier']], how="left", on="id")
+    prior_knowledge_samples = pd.merge(
+        prior_knowledge_samples, sampled_df[["id", "quality_tier"]], how="left", on="id"
+    )
     # samples without quality_tier means not sampled
-    prior_knowledge_samples.dropna(subset=['quality_tier'], inplace=True)
+    prior_knowledge_samples.dropna(subset=["quality_tier"], inplace=True)
     # free memory
     del sampled_df
-    prior_knowledge_samples['tag_count'] = prior_knowledge_samples[
-            'tag_string'
-        ].str.split(' ').str.len()
-
+    prior_knowledge_samples["tag_count"] = (
+        prior_knowledge_samples["tag_string"].str.split(" ").str.len()
+    )
 
     if not dedup_path.is_dir():
         logger.error(f"Deduplication directory not found: {dedup_path}")
@@ -164,7 +171,7 @@ def automate_deduplication(
         # find all images and group them by their immediate parent folder.
         # This handles both 'group/0/img' and 'group/character/0/img' structures.
 
-        all_images = [p for p in group_path.rglob('*') if is_image_file(p)]
+        all_images = [p for p in group_path.rglob("*") if is_image_file(p)]
 
         if not all_images:
             # Empty group folder, just remove it
@@ -191,9 +198,7 @@ def automate_deduplication(
                 files_to_recover = images_by_parent[folder_to_keep]
 
                 for file_path in files_to_recover:
-                    _move_back_from_dedup(
-                        file_path, dedup_path, root_path
-                    )
+                    _move_back_from_dedup(file_path, dedup_path, root_path)
 
                 # Clean up by deleting the entire processed group folder
                 shutil.rmtree(group_path)
@@ -221,8 +226,8 @@ def automate_deduplication(
                 # --- Apply new heuristics based on prior_knowledge_samples ---
                 image_ids = [int(p.stem) for p in image_files]
                 group_df = prior_knowledge_samples[
-                    prior_knowledge_samples['id'].isin(image_ids)
-                ].set_index('id')
+                    prior_knowledge_samples["id"].isin(image_ids)
+                ].set_index("id")
 
                 if len(group_df) != len(image_files):
                     logger.warning(
@@ -237,23 +242,21 @@ def automate_deduplication(
                 if len(image_files) == 2:
                     # Case 1: Two images. Keep the best one.
                     sorted_df = group_df.sort_values(
-                        by=['tag_count', 'score', 'fav_count'],
-                        ascending=[False, False, False]
+                        by=["tag_count", "score", "fav_count"],
+                        ascending=[False, False, False],
                     )
                     ids_to_keep.add(sorted_df.index[0])
 
                 elif len(image_files) >= 3:
                     # Case 2: Three or more images.
                     # Keep the one with the longest prompt.
-                    id_max_tags = group_df['tag_count'].idxmax()
+                    id_max_tags = group_df["tag_count"].idxmax()
                     ids_to_keep.add(id_max_tags)
 
                     # Keep the one with the highest score.
                     # If it's the same as the one with max tags,
                     # keep the second highest score.
-                    sorted_by_score = group_df.sort_values(
-                        by='score', ascending=False
-                    )
+                    sorted_by_score = group_df.sort_values(by="score", ascending=False)
                     if sorted_by_score.index[0] == id_max_tags:
                         if len(sorted_by_score) > 1:
                             ids_to_keep.add(sorted_by_score.index[1])
@@ -261,29 +264,21 @@ def automate_deduplication(
                         ids_to_keep.add(sorted_by_score.index[0])
 
                 # Determine which files to keep and delete
-                files_to_keep = [
-                    p for p in image_files if int(p.stem) in ids_to_keep
-                ]
+                files_to_keep = [p for p in image_files if int(p.stem) in ids_to_keep]
 
                 # Perform file operations
                 for file_to_keep in files_to_keep:
-                    _move_back_from_dedup(
-                        file_to_keep, dedup_path, root_path
-                    )
+                    _move_back_from_dedup(file_to_keep, dedup_path, root_path)
 
                 # Clean up the entire group folder
                 shutil.rmtree(group_path)
                 moved_back_folders += 1
 
             except Exception as e:
-                logger.error(
-                    f"Error processing group {group_path.name}: {e}"
-                )
+                logger.error(f"Error processing group {group_path.name}: {e}")
                 skipped_folder += 1
-    print(
-        f"Moved back folders {moved_back_folders}\n"
-        f"Skipped folders {skipped_folder}"
-    )
+    print(f"Moved back folders {moved_back_folders}\nSkipped folders {skipped_folder}")
+
 
 def recover_files(output_path: Path, root_path: Path, max_workers: int = 8):
     """
@@ -305,7 +300,7 @@ def recover_files(output_path: Path, root_path: Path, max_workers: int = 8):
 
     logger.info(f"Scanning for files to recover from {output_path}...")
     # Find all files, not just images, to include .txt files etc.
-    files_to_move = [p for p in output_path.rglob('*') if p.is_file()]
+    files_to_move = [p for p in output_path.rglob("*") if p.is_file()]
 
     if not files_to_move:
         logger.warning("No files found in the output directory to recover.")
@@ -325,30 +320,24 @@ def recover_files(output_path: Path, root_path: Path, max_workers: int = 8):
                 relative_to_output = src_path.relative_to(output_path)
 
                 # We skip the first part ('group_name')
-                original_relative_path = Path(
-                    *relative_to_output.parts[1:]
-                )
+                original_relative_path = Path(*relative_to_output.parts[1:])
 
                 dest_path = root_path / original_relative_path
 
-                futures.append(
-                    executor.submit(_move_file_worker, src_path, dest_path)
-                )
+                futures.append(executor.submit(_move_file_worker, src_path, dest_path))
             except (ValueError, IndexError):
                 logger.warning(
-                    f"Could not determine original path for {src_path}. "
-                    "Skipping."
+                    f"Could not determine original path for {src_path}. Skipping."
                 )
 
         progress = tqdm(
-            as_completed(futures),
-            total=len(futures),
-            desc="Recovering Files"
+            as_completed(futures), total=len(futures), desc="Recovering Files"
         )
         for future in progress:
             future.result()
 
     logger.info("File recovery process complete.")
+
 
 def _scan_subdir_for_ids(subdir: Path) -> set[str]:
     """
@@ -357,7 +346,8 @@ def _scan_subdir_for_ids(subdir: Path) -> set[str]:
     """
     # Recursively find all files and filter them using the is_image_file
     # helper to ensure only valid image types are processed.
-    return {p.stem for p in subdir.rglob('*') if is_image_file(p)}
+    return {p.stem for p in subdir.rglob("*") if is_image_file(p)}
+
 
 def create_exclusion_list(
     sampled_ids_csv: str,
@@ -391,11 +381,10 @@ def create_exclusion_list(
         return
 
     end_index = (
-        start_index + max_downloads
-        if max_downloads is not None else len(source_df)
+        start_index + max_downloads if max_downloads is not None else len(source_df)
     )
     target_df = source_df.iloc[start_index:end_index]
-    expected_ids = set(target_df['id'].astype(str))
+    expected_ids = set(target_df["id"].astype(str))
     logger.info(
         f"Loaded {len(expected_ids)} expected IDs from "
         f"{sampled_ids_csv} (rows {start_index} to {end_index})."
@@ -407,20 +396,15 @@ def create_exclusion_list(
         logger.warning(f"No subdirectories in {root_path}. Scanning root.")
         subdirs = [root_path]
 
-    logger.info(
-        f"Scanning {len(subdirs)} subdirs with {num_workers} threads..."
-    )
+    logger.info(f"Scanning {len(subdirs)} subdirs with {num_workers} threads...")
     found_ids = set()
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         future_to_subdir = {
-            executor.submit(_scan_subdir_for_ids, subdir): subdir
-            for subdir in subdirs
+            executor.submit(_scan_subdir_for_ids, subdir): subdir for subdir in subdirs
         }
 
         progress = tqdm(
-            as_completed(future_to_subdir),
-            total=len(subdirs),
-            desc="Scanning Dirs"
+            as_completed(future_to_subdir), total=len(subdirs), desc="Scanning Dirs"
         )
         for future in progress:
             found_ids.update(future.result())
@@ -436,10 +420,11 @@ def create_exclusion_list(
         return
 
     # Step 4: Create and save the exclusion DataFrame.
-    exclude_df = pd.DataFrame(list(missing_ids), columns=['id'])
+    exclude_df = pd.DataFrame(list(missing_ids), columns=["id"])
     Path(output_csv_path).parent.mkdir(parents=True, exist_ok=True)
     exclude_df.to_csv(output_csv_path, index=False)
     logger.info(f"Exclusion list saved to {output_csv_path}")
+
 
 def deduplicate_images(
     root_dir: str,
@@ -448,6 +433,8 @@ def deduplicate_images(
     batch_size: int = 128,
     max_workers: int = 8,
     move_back: bool = False,
+    artists_list: list = None,
+    sampled_ids_csv: str = None,
 ):
     """
     Finds and moves similar images using an efficient, asynchronous, and
@@ -485,6 +472,29 @@ def deduplicate_images(
     output_path.mkdir(exist_ok=True)
 
     image_paths = find_image_files(root_path)
+
+    # --- Filter out artist images from deduplication ---
+    if artists_list and sampled_ids_csv:
+        try:
+            sampled_df = pd.read_csv(sampled_ids_csv, low_memory=False)
+            formatted_artists = [format_danbooru_tag_inverse(a) for a in artists_list]
+            if "tag_string" in sampled_df.columns:
+                artist_ids = set()
+                for artist in formatted_artists:
+                    artist_pattern = r"(?:^|\s)" + re.escape(artist) + r"(?:$|\s)"
+                    mask = sampled_df["tag_string"].str.contains(
+                        artist_pattern, regex=True, na=False
+                    )
+                    artist_ids.update(sampled_df.loc[mask, "id"].astype(str).tolist())
+
+                filtered_paths = [p for p in image_paths if p.stem not in artist_ids]
+                logger.info(
+                    f"Excluded {len(image_paths) - len(filtered_paths)} images "
+                    f"belonging to protected artists from deduplication."
+                )
+                image_paths = filtered_paths
+        except Exception as e:
+            logger.error(f"Failed to filter artists in deduplication: {e}")
     if not image_paths:
         logger.warning("No images found. Deduplication step is complete.")
         return
@@ -497,8 +507,7 @@ def deduplicate_images(
     )
     # Create batches of file paths
     batches = [
-        image_paths[i:i + batch_size]
-        for i in range(0, len(image_paths), batch_size)
+        image_paths[i : i + batch_size] for i in range(0, len(image_paths), batch_size)
     ]
 
     hashes, valid_paths = [], []
@@ -507,9 +516,7 @@ def deduplicate_images(
             executor.submit(_hash_batch_worker, batch): batch for batch in batches
         }
         progress = tqdm(
-            as_completed(future_to_batch),
-            total=len(batches),
-            desc="Hashing Batches"
+            as_completed(future_to_batch), total=len(batches), desc="Hashing Batches"
         )
         for future in progress:
             batch_hashes, batch_valid_paths = future.result()
@@ -539,7 +546,7 @@ def deduplicate_images(
     dsu = DSU(num_images)
     for i in range(num_images):
         # Get neighbors of image i from the Faiss result
-        neighbors = I[lims[i]:lims[i+1]]
+        neighbors = I[lims[i] : lims[i + 1]]
         for j in neighbors:
             if i != j:
                 dsu.union(i, j)
@@ -551,9 +558,7 @@ def deduplicate_images(
         groups[root].append(i)
 
     # Filter out single-member groups (images with no duplicates)
-    duplicate_groups = [
-        g for g in groups.values() if len(g) > 1
-    ]
+    duplicate_groups = [g for g in groups.values() if len(g) > 1]
     logger.info(f"Identified {len(duplicate_groups)} groups of similar images.")
 
     # --- 4. Move Files ---
