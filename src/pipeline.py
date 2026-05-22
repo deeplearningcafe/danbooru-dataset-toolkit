@@ -558,7 +558,10 @@ class DataPipeline:
             print("No valid images found for face cropping after filtering.")
             return
 
-        cropper = FaceCropper(model_path=model_path, min_res=min_res)
+        artist_list = self.config.get("sampling", {}).get("artist_list", [])
+        cropper = FaceCropper(
+            model_path=model_path, min_res=min_res, allowed_artists=artist_list
+        )
         cropper.process_dataframe(
             df=face_df,
             input_dir=self.config["download_dir"],
