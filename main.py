@@ -161,6 +161,35 @@ def encode_tag_weights(
 
 
 @app.command()
+def encode_hq_latents(
+    hq_csv_path: str = typer.Option(..., help="Path to the HQ dataset CSV."),
+    temp_dir: str = typer.Option(
+        "data/temp_hq", help="Temporary directory for HQ samples."
+    ),
+    config_path: str = typer.Option(
+        "configs/default_config.yaml", help="Path to the configuration file."
+    ),
+):
+    """Prepares and encodes a high-quality dataset into 1MP H5 latents."""
+    pipeline = DataPipeline(config_path)
+    pipeline.run_hq_latent_encoding(hq_csv_path, temp_dir)
+
+
+@app.command()
+def encode_hq_tag_weights(
+    temp_dir: str = typer.Option(
+        "data/temp_hq", help="Temporary directory for HQ samples."
+    ),
+    config_path: str = typer.Option(
+        "configs/default_config.yaml", help="Path to the configuration file."
+    ),
+):
+    """Encodes the tags weights of the high-quality dataset."""
+    pipeline = DataPipeline(config_path)
+    pipeline.run_hq_tag_weight_encoding(temp_dir)
+
+
+@app.command()
 def full_pipeline(
     config_path: str = typer.Option(
         "configs/default_config.yaml", help="Path to the configuration file."

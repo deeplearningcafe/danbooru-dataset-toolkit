@@ -55,23 +55,18 @@ def process_image(
     Try to open an image, check for a non-empty prompt file (.txt or .json),
     and return its dimensions or an appropriate error.
     """
-    # First, validate that a corresponding non-empty prompt file exists.
-    # This check is crucial for ensuring that every image in the dataset
-    # has a label before we proceed with the more expensive image loading.
     prompt_path = path.with_suffix(label_ext)
     prompt_exists = False
     if prompt_path.exists() and prompt_path.stat().st_size > 0:
         prompt_exists = True
 
     if not prompt_exists:
-        # Return a specific, informative error if no valid prompt is found.
         return (
             path,
             None,
             FileNotFoundError(f"Prompt not found or is empty for {path.name}"),
         )
 
-    # If a prompt exists, proceed to open and validate the image file.
     try:
         with Image.open(path) as img:
             size = img.size
@@ -220,6 +215,9 @@ class LatentEncodingDataset(Dataset):
         transform=None,
         df_tokens_path: str = None,
         already_tokenized: bool = False,
+        max_res_area: Tuple[int, int] = (768, 512),
+        max_dim_limit: int = 1024,
+        base_res: Tuple[int, int] = (512, 512),
     ):
         self.root = Path(root)
         self.dtype = dtype
@@ -276,12 +274,8 @@ class LatentEncodingDataset(Dataset):
             f"{len(self.booru_id_to_idx)} booru IDs."
         )
 
-        max_res_area = (768, 512)
-
-        max_dim_limit = 1024  # Absolute max dimension
         min_size = 256
         divisible = 64
-        base_res = (512, 512)
         vae_factor = 8
 
         _bucket_res, self.log_aspect_ratios = self.generate_buckets(

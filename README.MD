@@ -167,6 +167,7 @@ The `config.yaml` file is central to the pipeline. Key sections include:
 
 ## Author
 [aipracticecafe](https://github.com/deeplearningcafe)
+[aipracticecafe-codeberg](https://codeberg.org/aipracticecafe)
 
 ## License
 This project is licensed under the `Apache license 2.0`. Details are in the [LICENSE](LICENSE.txt) file. I don't own the data from the `danbooru` website.

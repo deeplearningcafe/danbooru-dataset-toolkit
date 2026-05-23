@@ -17,6 +17,7 @@ from .core.deduplication import (
 from .core.database_generation import create_prior_knowledge_dataset
 from .core.dataset_analysis import analyze_prior_knowledge_dataset
 from .core.face_cropping import FaceCropper
+from .core.hq_dataset import HQDatasetPreparer
 
 import os
 import random
@@ -573,3 +574,114 @@ class DataPipeline:
             "NOTE: You can now run the 'upsample-prompts' command pointing "
             f"to '{output_dir}' to generate fresh tags for the faces."
         )
+
+    def run_hq_latent_encoding(self, hq_csv_path: str, temp_dir: str):
+        """
+        Prepares and encodes a high-quality dataset using 1MP resolution.
+        """
+        print("--- Starting HQ Dataset Preparation & Encoding ---")
+
+        # copy images and prompt files
+        preparer = HQDatasetPreparer(temp_dir=temp_dir)
+        preparer.prepare(hq_csv_path)
+
+        print("Initializing Latent Encoding for HQ Dataset (1MP)...")
+        le_config = self.config["latent_encoding"]
+
+        max_res_area = (1024, 1024)
+        max_dim_limit = 1536
+        base_res = (1024, 1024)
+
+        dataset = LatentEncodingDataset(
+            root=temp_dir,
+            label_ext=le_config["label_ext"],
+            already_tokenized=le_config["already_tokenized"],
+            max_res_area=max_res_area,
+            max_dim_limit=max_dim_limit,
+            base_res=base_res,
+        )
+
+        print("Loading models for encoding...")
+        tokenizer = CLIPTokenizer.from_pretrained(
+            self.config["prompts"]["tokenizer_path"], local_files_only=True
+        )
+        text_encoder = (
+            Clip.from_pretrained(ClipConfig, le_config["clip_path"])
+            .to(torch.float32)
+            .eval()
+        )
+        text_encoder.requires_grad_(False)
+
+        vae = (
+            Vae.from_pretrained(VaeConfig, le_config["vae_path"])
+            .to(self.config["device"])
+            .eval()
+        )
+        vae.requires_grad_(False)
+
+        hq_latents_dir = os.path.join(self.reports_dir, "hq_latents")
+
+        encoder = LatentEncoder(
+            dataset=dataset,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            output_dir=hq_latents_dir,
+            samples_per_shard=le_config["samples_per_shard"],
+            batch_size=le_config["batch_size"],
+            num_workers=le_config["num_workers"],
+            device=self.config["device"],
+            length_tiers=le_config["length_tiers"],
+            h5_compression=le_config["h5_compression"],
+            cache_text_embeds=le_config["cache_text_embeds"],
+            store_tokenized_captions=le_config["store_tokenized_captions"],
+            already_tokenized=le_config["already_tokenized"],
+            min_sample_count=le_config["min_sample_count"],
+            # here we don't need the aesthetic csv as everyting is from the same tier
+        )
+
+        encoder.encode_dataset()
+        print("HQ Latent encoding complete.")
+
+    def run_hq_tag_weight_encoding(self, temp_dir: str):
+        """
+        Encodes the prepared dataset into a sharded H5 latent cache
+        using the configuration specified in the YAML file.
+        """
+        print("Initializing Latent Encoding for HQ Dataset (1MP)...")
+        le_config = self.config["latent_encoding"]
+
+        max_res_area = (1024, 1024)
+        max_dim_limit = 1536
+        base_res = (1024, 1024)
+
+        dataset = LatentEncodingDataset(
+            root=temp_dir,
+            label_ext=le_config["label_ext"],
+            already_tokenized=le_config["already_tokenized"],
+            max_res_area=max_res_area,
+            max_dim_limit=max_dim_limit,
+            base_res=base_res,
+        )
+
+        hq_latents_dir = os.path.join(self.reports_dir, "hq_latents")
+
+        encoder = LatentEncoder(
+            dataset=dataset,
+            vae=None,
+            text_encoder=None,
+            tokenizer=None,
+            output_dir=hq_latents_dir,
+            samples_per_shard=le_config["samples_per_shard"],
+            batch_size=le_config["batch_size"],
+            num_workers=le_config["num_workers"],
+            device=self.config["device"],
+            length_tiers=le_config["length_tiers"],
+            h5_compression=le_config["h5_compression"],
+            cache_text_embeds=le_config["cache_text_embeds"],
+            store_tokenized_captions=le_config["store_tokenized_captions"],
+            min_sample_count=le_config["min_sample_count"],
+        )
+
+        encoder.encode_tag_weights()
+        print("Latent encoding complete.")

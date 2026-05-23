@@ -6,7 +6,7 @@ from src.core.prompt_upsampler import (
     combine_prompts_intelligently,
     custom_collate_with_paths,
 )
-from aesthetic.aesthetic import AestheticClassifier
+from aesthetic.training.models.four_cls import AestheticClassifier
 from ..prompts.prompt_utils import validate_upsampled_batch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -196,7 +196,6 @@ def unified_aes_upsampler(
     # 5. Save all results to CSV files
     print("Saving results...")
 
-    # CHANGED: Append to existing files or create new ones to prevent overwriting
     aes_mode = "a" if os.path.exists(aesthetic_labels_csv) else "w"
     up_mode = "a" if os.path.exists(upsampled_tags_path) else "w"
     pd.DataFrame(classification_results).to_csv(
