@@ -122,40 +122,66 @@ class FaceCropper:
                 img = batch_imgs[idx]
                 img_h, img_w = img.shape[:2]
 
-                # Add padding to preserve hair and increase usable samples
-                pad_x = int(w_orig * self.padding)
-                pad_y = int(h_orig * self.padding)
-                top_pad = int(h_orig * self.top_padding)
+                is_close_up = (w_orig * h_orig) > 0.6 * (img_w * img_h)
 
-                x1 = max(0, x1 - pad_x)
-                y1 = max(0, y1 - top_pad)
-                x2 = min(img_w, x2 + pad_x)
-                y2 = min(img_h, y2 + pad_y)
+                if is_close_up:
+                    # Ignore padding and YOLO output, resize original image
+                    new_w, new_h = 256, 256
 
-                w, h = x2 - x1, y2 - y1
+                    if new_w != 256 or new_h != 256:
+                        print(
+                            f"Close-up with incorrect dims with path: {rel_path} and w:{new_w}, h:{new_h}"
+                        )
+                        continue
 
-                if w < self.min_res or h < self.min_res:
-                    continue
-
-                face_crop = img[y1:y2, x1:x2]
-
-                # Resize the shortest edge to min_res to match aspect ratio
-                if w < h:
-                    new_w = self.min_res
-                    new_h = int(h * (self.min_res / w))
+                    final_crop = cv2.resize(
+                        img, (new_w, new_h), interpolation=cv2.INTER_AREA
+                    )
                 else:
-                    new_h = self.min_res
-                    new_w = int(w * (self.min_res / h))
+                    # Add padding to preserve hair and increase usable samples
+                    pad_x = int(w_orig * self.padding)
+                    pad_y = int(h_orig * self.padding)
+                    top_pad = int(h_orig * self.top_padding)
 
-                face_resized = cv2.resize(
-                    face_crop, (new_w, new_h), interpolation=cv2.INTER_AREA
-                )
+                    x1 = max(0, x1 - pad_x)
+                    y1 = max(0, y1 - top_pad)
+                    x2 = min(img_w, x2 + pad_x)
+                    y2 = min(img_h, y2 + pad_y)
 
-                start_x = (new_w - self.min_res) // 2
-                start_y = (new_h - self.min_res) // 2
-                final_crop = face_resized[
-                    start_y : start_y + self.min_res, start_x : start_x + self.min_res
-                ]
+                    w, h = x2 - x1, y2 - y1
+
+                    if w < self.min_res or h < self.min_res:
+                        print(
+                            f"Crop with incorrect dims with path: {rel_path} and w:{w}, h:{h}"
+                        )
+                        continue
+
+                    face_crop = img[y1:y2, x1:x2]
+
+                    # Resize the shortest edge to min_res to match aspect ratio
+                    if w < h:
+                        new_w = self.min_res
+                        new_h = int(h * (self.min_res / w))
+                    else:
+                        new_h = self.min_res
+                        new_w = int(w * (self.min_res / h))
+
+                    if new_w != 256 or new_h != 256:
+                        print(
+                            f"Image with incorrect dims with path: {rel_path} and w:{new_w}, h:{new_h}"
+                        )
+                        continue
+
+                    face_resized = cv2.resize(
+                        face_crop, (new_w, new_h), interpolation=cv2.INTER_AREA
+                    )
+
+                    start_x = (new_w - self.min_res) // 2
+                    start_y = (new_h - self.min_res) // 2
+                    final_crop = face_resized[
+                        start_y : start_y + self.min_res,
+                        start_x : start_x + self.min_res,
+                    ]
 
                 out_file = output_path / batch_rel_paths[idx]
                 out_file.parent.mkdir(parents=True, exist_ok=True)
