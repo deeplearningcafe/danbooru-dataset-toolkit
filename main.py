@@ -190,6 +190,17 @@ def encode_hq_tag_weights(
 
 
 @app.command()
+def encode_raw_images(
+    config_path: str = typer.Option(
+        "configs/default_config.yaml", help="Path to the configuration file."
+    ),
+):
+    """Encodes raw images and prompts into streaming Parquet shards."""
+    pipeline = DataPipeline(config_path)
+    pipeline.run_image_stream_encoding()
+
+
+@app.command()
 def full_pipeline(
     config_path: str = typer.Option(
         "configs/default_config.yaml", help="Path to the configuration file."

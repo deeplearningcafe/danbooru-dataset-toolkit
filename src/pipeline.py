@@ -18,6 +18,7 @@ from .core.database_generation import create_prior_knowledge_dataset
 from .core.dataset_analysis import analyze_prior_knowledge_dataset
 from .core.face_cropping import FaceCropper
 from .core.hq_dataset import HQDatasetPreparer
+from .core.encode_images import ImageStreamEncoder
 
 import os
 import random
@@ -685,3 +686,37 @@ class DataPipeline:
 
         encoder.encode_tag_weights()
         print("Latent encoding complete.")
+
+    def run_image_stream_encoding(self):
+        """
+        Encodes raw images and prompts into a Parquet streaming dataset.
+        """
+        print("--- Starting Step: Image Streaming Parquet Encoding ---")
+        le_config = self.config["latent_encoding"]
+
+        dataset = LatentEncodingDataset(
+            root=self.config["download_dir"],
+            label_ext=le_config["label_ext"],
+            already_tokenized=le_config["already_tokenized"],
+        )
+
+        tokenizer = CLIPTokenizer.from_pretrained(
+            self.config["prompts"]["tokenizer_path"], local_files_only=True
+        )
+
+        output_dir = os.path.join(
+            self.reports_dir,
+            le_config.get("parquet_output_dir", "raw_parquet"),
+        )
+
+        encoder = ImageStreamEncoder(
+            dataset=dataset,
+            tokenizer=tokenizer,
+            output_dir=output_dir,
+            samples_per_shard=le_config["samples_per_shard"],
+            length_tiers=le_config["length_tiers"],
+            min_sample_count=le_config["min_sample_count"],
+        )
+
+        encoder.encode_dataset()
+        print("Image streaming Parquet encoding complete.")
