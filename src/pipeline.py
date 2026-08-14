@@ -110,8 +110,6 @@ class DataPipeline:
             output_csv_path=self.config["prior_data"]["output_csv_path"],
             max_workers=self.config["prior_data"]["max_workers"],
             batch_size=self.config["prior_data"]["batch_size"],
-            character_list=self.config["sampling"].get("character_list", []),
-            artist_list=self.config["sampling"].get("artist_list", []),
         )
         print(f"Dataset creation complete.")
 
@@ -142,15 +140,13 @@ class DataPipeline:
             quality_percentages=self.config["sampling"]["quality_distribution"],
             ratings_percentage=self.config["sampling"]["rating_distribution"],
             prior_knowledge_path=self.config["prior_data"]["output_csv_path"],
-            artists_txt=self.config["prior_data"]["knowledge_bases_paths"][0],
+            knowledge_bases_paths=self.config["prior_data"]["knowledge_bases_paths"],
             aes_scores_csv_path=f"{self.config['parquet_path']}/aes_2024.csv",
             random_seed=self.config["sampling"]["random_seed"],
             output_csv=self.config["sampling"]["sampled_ids_csv"],
             skip_tags=self.config["sampling"]["skip_tags"],
             include_tags=self.config["sampling"]["include_tags"],
             exclude_path=self.config["download"]["exclusion_list_csv"],
-            character_list=self.config["sampling"].get("character_list", []),
-            artist_list=self.config["sampling"].get("artist_list", []),
             is_lora=self.config["sampling"].get("is_lora", False),
             reports_dir=self.reports_dir,
             verbose=True,

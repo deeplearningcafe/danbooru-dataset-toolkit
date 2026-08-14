@@ -4,7 +4,7 @@ import os
 import re
 from typing import Tuple, Dict, List, Optional
 from ..prompts.prompt_utils import (
-    format_danbooru_tag_inverse,
+    get_tags_from_file,
     count_tags,
     analyze_tag_distribution,
 )
@@ -892,13 +892,11 @@ def filter_and_sample_by_quality(
     quality_percentages: Dict[str, float],
     ratings_percentage: Dict[str, float],
     prior_knowledge_path: Optional[str] = None,
-    artists_txt: Optional[str] = None,
+    knowledge_bases_paths: Optional[List[str]] = None,
     aes_scores_csv_path: Optional[str] = None,
     skip_tags: Optional[Dict[str, float]] = None,
     include_tags: Optional[Dict[str, float]] = None,
     exclude_path: Optional[pd.DataFrame] = None,
-    character_list: Optional[List[str]] = None,
-    artist_list: Optional[List[str]] = None,
     is_lora: bool = False,
     random_seed: int = 42,
     output_csv: str = "sampled_ids.csv",
@@ -946,17 +944,14 @@ def filter_and_sample_by_quality(
     stats = {}
     all_sampled_dfs = []
 
-    artist_tags = set()
-    if not os.path.exists(artists_txt):
-        print(f"Warning: File not found at '{artists_txt}'. Skipping.")
-    try:
-        with open(artists_txt, "r", encoding="utf-8") as f:
-            for line in f:
-                artist_tag = format_danbooru_tag_inverse(line.strip())
-                if artist_tag:
-                    artist_tags.add(artist_tag)
-    except Exception as e:
-        print(f"Error processing file '{artists_txt}': {e}")
+    artist_list = []
+    character_list = []
+    if knowledge_bases_paths:
+        if len(knowledge_bases_paths) > 0:
+            artist_list = get_tags_from_file(knowledge_bases_paths[0])
+        if len(knowledge_bases_paths) > 1:
+            character_list = get_tags_from_file(knowledge_bases_paths[1])
+    artist_tags = set(artist_list)
 
     # --- Step 0: Load and Prepare Prior Knowledge Dataset ---
     prior_knowledge_samples = pd.DataFrame()

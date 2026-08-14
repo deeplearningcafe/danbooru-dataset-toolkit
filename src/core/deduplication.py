@@ -9,13 +9,11 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import re
-from ..utils.loader import load_prior_knowledge_df
+from ..utils.loader import load_prior_knowledge_df, IMAGE_SUFFIXES
 from ..prompts.prompt_utils import format_danbooru_tag_inverse
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
 
 def is_image_file(path: Path) -> bool:

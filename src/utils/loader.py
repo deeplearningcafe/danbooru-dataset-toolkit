@@ -1,5 +1,6 @@
 from glob import glob
 import os
+import duckdb
 import pandas as pd
 from pathlib import Path
 from typing import Optional, Callable, Generator, List
@@ -9,90 +10,81 @@ import logging
 import multiprocessing
 
 # Define image file extensions
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"}
 
-def load_all_parquets(global_path:str, skip_aes:bool=False, num_parquets:int=100):
-    # Get all parquet files in the directory
-    parquet_files = glob(f"{global_path}/train-*.parquet")
-    # Create an empty list to store dataframes
-    dfs = []
 
-    # Read each parquet file and append to the list
-    for i, file in enumerate(parquet_files):
-        if i < num_parquets:
-            print(f"Loading {os.path.basename(file)}...")
-            df_chunk = pd.read_parquet(file)
-            dfs.append(df_chunk)
+def load_all_parquets(
+    global_path: str, skip_aes: bool = False, num_parquets: int = 100
+) -> pd.DataFrame:
+    """Loads parquet files directly using DuckDB zero-copy integration."""
+    parquet_glob = os.path.join(global_path, "train-*.parquet")
+    aes_csv = os.path.join(global_path, "aes_2024.csv")
 
-    # Concatenate all dataframes vertically (axis=0)
-    df = pd.concat(dfs, axis=0, ignore_index=True)
-    columns_to_drop = ['source', 'up_score', 'down_score',
-                   'last_commented_at', 'last_comment_bumped_at', 'last_noted_at',
-                   'uploader_id', 'approver_id', 'pixiv_id', 'bit_flags', ]
-    df.drop(columns=columns_to_drop, inplace=True)
-    if not skip_aes:
-        try:
-            score_df = pd.read_csv(f"{global_path}/aes_2024.csv")
-            score_df = score_df.rename(columns={'score': 'aes_score'})
-            df = df.merge(score_df, on='id', how='left')
-        except FileNotFoundError:
-            raise FileNotFoundError("Aesthetic labels file not founded")
+    conn = duckdb.connect()
+    if not skip_aes and os.path.exists(aes_csv):
+        query = f"""
+            SELECT p.* EXCLUDE (
+                source, up_score, down_score, last_commented_at,
+                last_comment_bumped_at, last_noted_at, uploader_id,
+                approver_id, pixiv_id, bit_flags
+            ), a.score AS aes_score
+            FROM read_parquet('{parquet_glob}') p
+            LEFT JOIN read_csv_auto('{aes_csv}') a ON p.id = a.id
+            LIMIT {num_parquets * 100000}
+        """
+    else:
+        query = f"""
+            SELECT * EXCLUDE (
+                source, up_score, down_score, last_commented_at,
+                last_comment_bumped_at, last_noted_at, uploader_id,
+                approver_id, pixiv_id, bit_flags
+            )
+            FROM read_parquet('{parquet_glob}')
+            LIMIT {num_parquets * 100000}
+        """
+    df = conn.execute(query).df()
+    conn.close()
     return df
+
 
 def load_prior_knowledge_df(
     prior_df_path: str,
-    aes_scores_csv_path: str=None,
-):
-    """Loads the csv containing the downloaded dataset from the prior knowledge
-    and merges it with the precomputed aesthetic scores csv.
+    aes_scores_csv_path: Optional[str] = None,
+) -> pd.DataFrame:
+    """Loads prior knowledge dataset from DuckDB database or flat files."""
+    conn = duckdb.connect()
 
-    Args:
-        prior_df_path (str): Path to the prior knowledge dataset.
-        aes_scores_csv_path (str, optional): Path to the aesthetic scores. Defaults to None.
-
-    Returns:
-        Pandas.DataFrame: Prior knowledge dataframe.
-    """
-    prior_knowledge_samples = pd.read_csv(
-        prior_df_path, header=0, low_memory=False
-    )
-    prior_knowledge_samples = prior_knowledge_samples.drop_duplicates().reset_index(drop=True)
+    if prior_df_path.endswith(".duckdb"):
+        source_query = f"SELECT * FROM '{prior_df_path}'.prior_knowledge"
+    elif prior_df_path.endswith(".parquet"):
+        source_query = f"SELECT * FROM read_parquet('{prior_df_path}')"
+    else:
+        source_query = f"SELECT * FROM read_csv_auto('{prior_df_path}')"
 
     if aes_scores_csv_path and os.path.exists(aes_scores_csv_path):
-        aes_df = pd.read_csv(aes_scores_csv_path)
-        aes_df = aes_df.rename(columns={'score': 'aes_score'})
-        prior_knowledge_samples = pd.merge(
-            prior_knowledge_samples, aes_df[['id', 'aes_score']],
-            on='id', how='left'
-        )
+        query = f"""
+            SELECT pk.*, aes.score AS aes_score
+            FROM ({source_query}) pk
+            LEFT JOIN read_csv_auto('{aes_scores_csv_path}') aes
+              ON pk.id = aes.id
+        """
+    else:
+        query = source_query
 
-    # Fill missing aes_score values with the mean to include new images.
-    if 'aes_score' in prior_knowledge_samples.columns:
-        nan_count = prior_knowledge_samples['aes_score'].isna().sum()
-        if nan_count > 0:
-            # the highest masterpiece number comes from applying the fillnan here and not after filtering
-            mean_aes = prior_knowledge_samples['aes_score'].mean()
-            prior_knowledge_samples['aes_score'] = prior_knowledge_samples[
-                'aes_score'
-            ].fillna(mean_aes)
+    df = conn.execute(query).df()
+    conn.close()
 
-            print(f"  - Filled {nan_count} missing 'aes_score' "
-                    f"values with the mean ({mean_aes:.4f}).")
-    if 'fav_count' in prior_knowledge_samples.columns:
-        nan_count = prior_knowledge_samples['fav_count'].isna().sum()
-        if nan_count > 0:
-            mean_aes = prior_knowledge_samples['fav_count'].mean()
-            prior_knowledge_samples['fav_count'] = prior_knowledge_samples[
-                'fav_count'
-            ].fillna(mean_aes)
+    df.drop_duplicates(subset=["id"], inplace=True)
+    if "aes_score" in df.columns and df["aes_score"].isna().any():
+        df["aes_score"] = df["aes_score"].fillna(df["aes_score"].mean())
+    if "fav_count" in df.columns and df["fav_count"].isna().any():
+        df["fav_count"] = df["fav_count"].fillna(df["fav_count"].mean())
 
-            print(f"  - Filled {nan_count} missing 'fav_count' "
-                    f"values with the mean ({mean_aes:.4f}).")
-    return prior_knowledge_samples
+    return df
+
 
 def dirwalk(
-    path: Path,
-    condition: Optional[Callable] = None
+    path: Path, condition: Optional[Callable] = None
 ) -> Generator[Path, None, None]:
     """Walk through directory and yield files that meet the condition."""
     try:
@@ -104,6 +96,7 @@ def dirwalk(
     except OSError as e:
         logging.error(f"Could not access directory {path}: {e}")
 
+
 def append_weight_to_json(json_path: str, weight: float):
     """
     Reads a JSON file, appends the 'tag_weight' key, and writes it back.
@@ -114,20 +107,20 @@ def append_weight_to_json(json_path: str, weight: float):
         json_path (str): The full path to the JSON file.
         weight (float): The tag weight to append.
     """
-    primary_encoding = 'utf-8'
+    primary_encoding = "utf-8"
     # Fallback to 'utf-16' to handle the 0xff error, which is common
     # with UTF-16 BOMs (0xfffe).
-    fallback_encoding = 'utf-16'
+    fallback_encoding = "utf-16"
     data = None
 
     try:
-        with open(json_path, 'r', encoding=primary_encoding) as f:
+        with open(json_path, "r", encoding=primary_encoding) as f:
             data = json.load(f)
     except UnicodeDecodeError as e:
         # 2. If decoding fails (e.g., due to 0xff), try the fallback
         print(f"Retrying {json_path} with {fallback_encoding} due to: {e}")
         try:
-            with open(json_path, 'r', encoding=fallback_encoding) as f:
+            with open(json_path, "r", encoding=fallback_encoding) as f:
                 data = json.load(f)
         except Exception as fe:
             # 3. If fallback fails, log and exit this sample
@@ -139,13 +132,14 @@ def append_weight_to_json(json_path: str, weight: float):
 
     # 4. If data was loaded successfully, update and write back
     if data is not None:
-        data['tag_weight'] = weight
+        data["tag_weight"] = weight
 
         try:
-            with open(json_path, 'w', encoding=primary_encoding) as f:
+            with open(json_path, "w", encoding=primary_encoding) as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
         except Exception as e:
             print(f"Warning: Failed to write back {json_path}. Reason: {e}")
+
 
 def is_valid_image(path: Path) -> bool:
     """
@@ -162,12 +156,14 @@ def is_valid_image(path: Path) -> bool:
         logging.warning(f"Corrupted image found and skipped: {path} - {e}")
         return False
 
+
 def _scan_and_validate_worker(directory: Path) -> List[Path]:
     """
     Worker function for multiprocessing. Scans a single directory
     and returns a list of valid image paths.
     """
     return list(dirwalk(directory, is_valid_image))
+
 
 def _scan_worker(directory: Path) -> List[Path]:
     """
@@ -179,10 +175,8 @@ def _scan_worker(directory: Path) -> List[Path]:
     # Use the highly optimized rglob for recursive file searching and
     # filter by checking the file suffix against a set of known image
     # extensions. This avoids the costly I/O of opening each file.
-    return [
-        p for p in directory.rglob('*')
-        if p.suffix.lower() in IMAGE_SUFFIXES
-    ]
+    return [p for p in directory.rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES]
+
 
 def _scan_worker_prompt(directory: Path) -> List[Path]:
     """
@@ -194,10 +188,8 @@ def _scan_worker_prompt(directory: Path) -> List[Path]:
     # Use the highly optimized rglob for recursive file searching and
     # filter by checking the file suffix against a set of known image
     # extensions. This avoids the costly I/O of opening each file.
-    return [
-        p for p in directory.rglob('*')
-        if p.suffix.lower() == ".txt"
-    ]
+    return [p for p in directory.rglob("*") if p.suffix.lower() == ".txt"]
+
 
 def parallel_scan_images(
     root_dir: Path,
@@ -220,16 +212,12 @@ def parallel_scan_images(
         logging.info("No subdirectories found. Scanning root directory...")
         return _scan_and_validate_worker(root_dir)
 
-    logging.info(
-        f"Starting parallel scan of {len(sub_dirs)} subdirectories..."
-    )
+    logging.info(f"Starting parallel scan of {len(sub_dirs)} subdirectories...")
 
     # If no subdirectories exist, scan the root directory directly in a
     # single-threaded manner.
     if not sub_dirs:
-        logging.info(
-            "No subdirectories found. Scanning root directory..."
-        )
+        logging.info("No subdirectories found. Scanning root directory...")
         return _scan_worker(root_dir)
 
     all_image_paths = []
@@ -246,3 +234,22 @@ def parallel_scan_images(
             all_image_paths.extend(image_paths)
 
     return all_image_paths
+
+
+def resolve_image_path(path: Path) -> Path:
+    """
+    Resolves an image path by checking if the original path exists,
+    or if an AVIF version (.avif) exists on disk.
+
+    Args:
+        path (Path): Target image Path object.
+
+    Returns:
+        Path: Existing file Path (original or .avif), or original if neither.
+    """
+    if path.exists():
+        return path
+    avif_path = path.with_suffix(".avif")
+    if avif_path.exists():
+        return avif_path
+    return path

@@ -17,7 +17,7 @@ from collections import defaultdict
 import math
 import gc  # For garbage collection if needed
 import pandas as pd
-from ..utils.loader import parallel_scan_images
+from ..utils.loader import parallel_scan_images, resolve_image_path
 
 import sys
 
@@ -55,6 +55,7 @@ def process_image(
     Try to open an image, check for a non-empty prompt file (.txt or .json),
     and return its dimensions or an appropriate error.
     """
+    actual_path = resolve_image_path(path)
     prompt_path = path.with_suffix(label_ext)
     prompt_exists = False
     if prompt_path.exists() and prompt_path.stat().st_size > 0:
@@ -68,7 +69,7 @@ def process_image(
         )
 
     try:
-        with Image.open(path) as img:
+        with Image.open(actual_path) as img:
             size = img.size
         return path, (size[0], size[1]), None  # (width, height) format
     except Exception as e:
@@ -320,7 +321,8 @@ class LatentEncodingDataset(Dataset):
         Returns:
             Tuple of (PIL Image object, prompt string)
         """
-        _img = Image.open(p)
+        actual_path = resolve_image_path(p)
+        _img = Image.open(actual_path)
         with p.with_suffix(label_ext).open("r") as f:
             if label_ext == ".txt":
                 prompt = f.read()

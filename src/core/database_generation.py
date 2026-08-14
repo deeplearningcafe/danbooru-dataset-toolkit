@@ -1,34 +1,17 @@
 """Generates and incrementally updates a local database of Danbooru metadata.
 
-This module handles the creation and updating of a dataset containing image
-metadata from the Danbooru API. It is designed to scale efficiently by using
-a combination of a crash-recovery text log and the existing dataset CSV as
-the absolute source of truth for state tracking.
-
-Key Features:
-    * Incremental Updates: By scanning the existing CSV at startup, the module
-      identifies the newest downloaded ID for each tag. It then only fetches
-      newer posts, drastically reducing API and I/O overhead.
-    * Time-Window Overlap: During updates, it fetches posts up to the last
-      known ID *and* a specified time window (e.g., 7 days prior). This ensures
-      that changing metadata (like upvotes or tags) on recently uploaded
-      images is captured and deduplicated cleanly.
-    * Crash Recovery: A lightweight text file logs fully processed tags to
-      prevent starting from scratch if the script is interrupted.
-
-This architecture makes the module highly robust for maintaining an up-to-date
-prior knowledge dataset for generative model training.
+Uses DuckDB for vectorized queries, zero-copy Pandas conversions, and fast
+incremental updates via native upserting.
 """
 
-import requests
-import time
-import pandas as pd
 import os
+import time
 from typing import List, Set, Dict
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from tqdm import tqdm
+import requests
+import duckdb
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..prompts.prompt_utils import get_tags_from_knowledge_bases
 
 HAS_CURL = False
@@ -105,103 +88,35 @@ def fetch_page_with_retry(session, tag, page):
 
 
 def get_newest_ids_for_tags(
-    dataset_path: str,
+    csv_path: str,
     tags: Set[str],
 ) -> Dict[str, int]:
-    """Scans the existing dataset to find the newest post ID per tag.
+    """Finds newest post ID per tag by querying CSV directly via DuckDB."""
+    if not os.path.exists(csv_path) or not tags:
+        return {}
 
-    This acts as the ground-truth watermark for incremental updates,
-    preventing the script from re-downloading the entire history of a tag.
-    It uses a memory-efficient strategy by dropping rows once evaluated.
-
-    Args:
-        dataset_path (str): Path to the existing CSV dataset.
-        tags (Set[str]): Set of tags to evaluate against the dataset.
-
-    Returns:
-        Dict[str, int]: Mapping of tags to their maximum downloaded ID.
+    conn = duckdb.connect()  # In-memory transient connection
+    tag_list = list(tags)
+    query = """
+        SELECT t.tag, MAX(pk.id)
+        FROM UNNEST(?::VARCHAR[]) AS t(tag)
+        JOIN read_csv_auto(?) pk
+          ON list_contains(
+                 string_split(pk.tag_string_character, ' '), t.tag
+             )
+          OR list_contains(
+                 string_split(pk.tag_string_artist, ' '), t.tag
+             )
+        GROUP BY t.tag
     """
-
-    if not os.path.exists(dataset_path) or not tags:
-        return {}
-
-    print("Scanning existing dataset to find newest post IDs for each tag...")
     try:
-        df = pd.read_csv(
-            dataset_path,
-            usecols=["id", "tag_string_character", "tag_string_artist"],
-            header=0,
-            low_memory=True,
-        )
-        df.fillna("", inplace=True)
-
-    except (FileNotFoundError, ValueError):
+        results = conn.execute(query, [tag_list, csv_path]).fetchall()
+        conn.close()
+        return {row[0]: row[1] for row in results if row[1] is not None}
+    except Exception as e:
+        print(f"DuckDB error in get_newest_ids_for_tags: {e}")
+        conn.close()
         return {}
-
-    all_artist_tags_in_df = set(" ".join(df["tag_string_artist"]).split())
-    artist_tags_to_keep = tags.intersection(all_artist_tags_in_df)
-    character_tags_to_process = tags - artist_tags_to_keep
-
-    df["tag_count_character"] = (
-        df["tag_string_character"]
-        .str.split(" ")
-        .apply(lambda x: len(x) if x != [""] else 0)
-    )
-
-    if artist_tags_to_keep:
-        artist_regex = "|".join(
-            rf"(?:^|\s){re.escape(tag)}(?:$|\s)" for tag in artist_tags_to_keep
-        )
-        df["has_priority_artist"] = df["tag_string_artist"].str.contains(
-            artist_regex, na=False
-        )
-    else:
-        df["has_priority_artist"] = False
-
-    newest_ids = {}
-    print(f"Initial dataset size: {len(df)} rows.")
-    # characters are bigger so reduce first
-    for tag in tqdm(
-        character_tags_to_process, desc="Processing character tags to get newest ids"
-    ):
-        if df.empty:
-            break
-
-        regex_pattern = rf"(?:^|\s){re.escape(tag)}(?:$|\s)"
-
-        mask = df["tag_string_character"].str.contains(regex_pattern, na=False)
-
-        if mask.any():
-            newest_ids[tag] = df.loc[mask, "id"].max()
-
-            # conditions for removing a row after it has been used:
-            # 1. It contains the character tag we just processed.
-            # 2. It contains ONLY ONE character.
-            # 3. It does NOT contain any of our priority artists.
-            removal_mask = (
-                mask & (df["tag_count_character"] == 1) & (~df["has_priority_artist"])
-            )
-
-            rows_to_drop = df.index[removal_mask]
-            if not rows_to_drop.empty:
-                df.drop(rows_to_drop, inplace=True)
-
-    print(f"Length for the artist search {len(df)}")
-    for tag in tqdm(artist_tags_to_keep, desc="same for artists"):
-        if df.empty:
-            break
-
-        regex_pattern = rf"(?:^|\s){re.escape(tag)}(?:$|\s)"
-        mask = df["tag_string_artist"].str.contains(regex_pattern, na=False)
-
-        if mask.any():
-            newest_ids[tag] = max(newest_ids.get(tag, 0), df.loc[mask, "id"].max())
-
-    print(
-        f"Found newest IDs for {len(newest_ids)} tags. "
-        f"Final dataset size for scan: {len(df)} rows."
-    )
-    return newest_ids
 
 
 def fetch_all_for_tag(session, tag, stop_at_id: int = None, time_window_days: int = 7):
@@ -249,18 +164,16 @@ def fetch_all_for_tag(session, tag, stop_at_id: int = None, time_window_days: in
             break
 
         page += 1
-        time.sleep(0.75)
+        time.sleep(1.0)
 
     return all_posts
 
 
 def create_prior_knowledge_dataset(
     knowledge_bases_paths: List[str],
-    output_csv_path: str = "prior_knowledge.parquet",
+    output_csv_path: str = "prior_knowledge.csv",
     max_workers: int = 10,
     batch_size: int = 100,
-    character_list: list = [],
-    artist_list: list = [],
     time_window_days: int = 7,
 ):
     """
@@ -278,20 +191,11 @@ def create_prior_knowledge_dataset(
     completed_tags_log_path = "completed_tags.txt"
 
     all_tags = get_tags_from_knowledge_bases(knowledge_bases_paths)
-
     completed_tags = load_completed_tags(completed_tags_log_path)
-
-    # Filter the tags to use only the characters and artists list from the config if they are not empty
-    if character_list or artist_list:
-        allowed_tags = set(character_list + artist_list)
-        all_tags = [tag for tag in all_tags if tag in allowed_tags]
-        # filter completed_tags to use only those included in user's list
-        completed_tags = set([tag for tag in completed_tags if tag in all_tags])
 
     # TODO: optimize this, as when using lists it's repetitive
     tags_to_fetch = [tag for tag in all_tags if tag not in completed_tags]
 
-    # Get the newest post IDs for tags that have already been downloaded.
     newest_ids_map = get_newest_ids_for_tags(output_csv_path, completed_tags)
 
     # New tags are prioritized to ensure they are downloaded first.
@@ -390,37 +294,29 @@ def create_prior_knowledge_dataset(
             ]
             df_batch = df_batch[existing_columns]
 
-            try:
-                header = not os.path.exists(output_csv_path)
-                df_batch.to_csv(output_csv_path, mode="a", index=False, header=header)
-                print(f"Saved {len(df_batch)} new unique posts to '{output_csv_path}'")
+            header = not os.path.exists(output_csv_path)
+            df_batch.to_csv(output_csv_path, mode="a", index=False, header=header)
+            print(f"Saved {len(df_batch)} new posts to '{output_csv_path}'")
 
-                newly_completed_tags = [
-                    tag for tag in successfully_downloaded_tags if tag in tags_to_fetch
-                ]
-                if newly_completed_tags:
-                    with open(completed_tags_log_path, "a", encoding="utf-8") as f:
-                        for tag in newly_completed_tags:
-                            f.write(f"{tag}\n")
-                    print(f"Logged {len(newly_completed_tags)} new tags.")
+            newly_done = [t for t in successfully_downloaded_tags if t in tags_to_fetch]
+            if newly_done:
+                with open(completed_tags_log_path, "a") as f:
+                    for t in newly_done:
+                        f.write(f"{t}\n")
 
-            except Exception as e:
-                print(f"Error saving batch to file: {e}")
+    if os.path.exists(output_csv_path):
+        print("\n--- Deduplicating CSV using DuckDB ---")
+        conn = duckdb.connect()
+        dedup_query = f"""
+            COPY (
+                SELECT * FROM read_csv_auto('{output_csv_path}')
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY id ORDER BY id
+                ) = 1
+            ) TO '{output_csv_path}' (HEADER, DELIMITER ',')
+        """
+        conn.execute(dedup_query)
+        conn.close()
+        print("CSV deduplication complete.")
 
-    print("\n--- Deduplicating database to keep updated metadata ---")
-    try:
-        if os.path.exists(output_csv_path):
-            print(f"Loading {output_csv_path} for deduplication...")
-            final_df = pd.read_csv(output_csv_path, low_memory=True)
-            initial_len = len(final_df)
-
-            final_df.drop_duplicates(subset=["id"], keep="last", inplace=True)
-            final_df.to_csv(output_csv_path, index=False)
-            print(
-                f"Global deduplication complete: Reduced from "
-                f"{initial_len} to {len(final_df)} rows."
-            )
-    except Exception as e:
-        print(f"Error during final dataset deduplication: {e}")
-
-    print("\n--- All batches processed. Dataset creation complete. ---")
+    print("\n--- Dataset creation complete. ---")

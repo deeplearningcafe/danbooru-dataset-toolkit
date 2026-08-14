@@ -121,7 +121,7 @@ def copy_previous_samples(
     copied_ids = set()
     print(f"Copying files... from the {len(old_paths_dict)} possible images")
 
-    for img_id in ids_to_copy:
+    for i, img_id in enumerate(ids_to_copy):
         if img_id in old_paths_dict:
             old_img_path = Path(old_paths_dict[img_id])
             tier = old_tiers_dict.get(img_id, "bad_score")
@@ -131,18 +131,25 @@ def copy_previous_samples(
             dest_folder.mkdir(parents=True, exist_ok=True)
 
             dest_img_path = dest_folder / old_img_path.name
+            if dest_img_path.exists():
+                continue
             shutil.copy2(old_img_path, dest_img_path)
 
             old_txt_path = old_img_path.with_suffix(".txt")
-            if old_txt_path.exists():
+            new_txt_path = dest_folder / old_txt_path.name
+            if old_txt_path.exists() and not new_txt_path.exists():
                 shutil.copy2(old_txt_path, dest_folder / old_txt_path.name)
 
             old_up_name = f"{old_img_path.stem}_upsampled.txt"
             old_up_path = old_img_path.parent / old_up_name
-            if old_up_path.exists():
+            new_up_path = dest_folder / old_up_name
+            if old_up_path.exists() and not new_up_path.exists():
                 shutil.copy2(old_up_path, dest_folder / old_up_name)
 
             copied_ids.add(img_id)
+
+        if i % 10000 == 0:
+            print(f"Processed {i} images!")
 
     print(f"Copied {len(copied_ids)} samples.")
 

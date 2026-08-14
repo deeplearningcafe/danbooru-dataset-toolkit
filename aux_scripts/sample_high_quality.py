@@ -4,6 +4,7 @@ import argparse
 import pandas as pd
 import yaml
 from pathlib import Path
+from src.utils.loader import resolve_image_path
 
 
 def sample_high_quality(
@@ -57,7 +58,8 @@ def sample_high_quality(
 
         copied = 0
         for _, row in df_sampled.iterrows():
-            src_file = Path(str(row["relative_path"]))
+            raw_path = Path(str(row["relative_path"]))
+            src_file = resolve_image_path(raw_path)
             img_id = row["id"]
             if src_file.exists():
                 shutil.copy2(src_file, tier_dir / src_file.name)
@@ -85,7 +87,8 @@ def sample_high_quality(
         print(f"Copying {n_samples} samples for 'best' to {best_dir}...")
         copied = 0
         for _, row in df_sampled.iterrows():
-            src_file = Path(str(row["relative_path"]))
+            raw_path = Path(str(row["relative_path"]))
+            src_file = resolve_image_path(raw_path)
             if src_file.exists():
                 shutil.copy2(src_file, best_dir / src_file.name)
                 copied += 1

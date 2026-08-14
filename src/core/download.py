@@ -7,6 +7,7 @@ import time
 import threading
 from pathlib import Path
 from typing import List, Optional
+from ..utils.loader import IMAGE_SUFFIXES
 
 HAS_CURL = False
 try:
@@ -90,7 +91,6 @@ class Downloader:
             print(f"Skipping row {index} due to invalid URL.")
             return None
 
-        valid_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
         quality2id = {
             "masterpiece": 3,
             "good_score": 2,
@@ -126,7 +126,7 @@ class Downloader:
         parsed_url = urllib.parse.urlparse(url)
         _, ext = os.path.splitext(os.path.basename(parsed_url.path).lower())
 
-        if ext not in valid_extensions:
+        if ext not in IMAGE_SUFFIXES:
             print(f"Skipping invalid extension for row {index}: {ext}")
             return None
 
@@ -140,7 +140,9 @@ class Downloader:
         if len(character_list) > 0:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-        if os.path.exists(save_path):
+        if os.path.exists(save_path) or os.path.exists(
+            str(Path(save_path).with_suffix(".avif"))
+        ):
             # Consider existing files a success to avoid re-downloading
             return relative_path
 

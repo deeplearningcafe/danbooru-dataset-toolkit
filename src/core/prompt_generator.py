@@ -8,6 +8,7 @@ from ..utils.loader import (
     load_all_parquets,
     parallel_scan_images,
     append_weight_to_json,
+    resolve_image_path,
 )
 from ..prompts.prompt_utils import (
     format_danbooru_tag_inverse,
@@ -889,40 +890,39 @@ class PromptGenerator:
         tokenizer_path = f"{model_path}tokenizer"
         self.tokenizer = CLIPTokenizer.from_pretrained(tokenizer_path)
 
+        out_path_obj = Path(output_dir)
         # Use tqdm for a progress bar, as this can be a slow I/O operation
         created_txts = 0
         for _, row in tqdm(
             df.iterrows(), total=df.shape[0], desc="Writing prompt files"
         ):
             prompt_text, tokens = self.construct_prompt_string(row)
-            relative_path = os.path.splitext(
-                row["relative_path"].replace("\\", os.sep)
-            )[0]
-            exists = False
-            if os.path.exists(f"{output_dir}/{row['relative_path']}"):
-                file_path = os.path.join(output_dir, f"{relative_path}.txt")
+
+            relative_path_str = row["relative_path"].replace("\\", os.sep)
+            relative_no_ext = os.path.splitext(relative_path_str)[0]
+
+            # Resolve image path check (handles original and .avif)
+            full_img_path = out_path_obj / relative_path_str
+            actual_img_path = resolve_image_path(full_img_path)
+            exists = actual_img_path.exists()
+
+            if exists:
+                file_path = os.path.join(output_dir, f"{relative_no_ext}.txt")
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(prompt_text)
 
                 if create_json_files:
-                    base_filename = os.path.basename(relative_path)
-                    # Split the filename from its extension to get the clean ID.
-                    img_id = os.path.splitext(base_filename)[0]
                     data = {
                         "prefix_tokens": tokens[0],
                         "general_tokens": tokens[1],
                         "suffix_tokens": tokens[2],
                     }
-                    file_path = os.path.join(output_dir, f"{relative_path}.json")
+                    file_path = os.path.join(output_dir, f"{relative_no_ext}.json")
                     with open(file_path, "w", encoding="utf-8") as f:
                         json.dump(data, f, ensure_ascii=False, indent=4)
-                exists = True
-                # continue
 
             if not exists:
-                print(
-                    f"The image with relative path {row['relative_path']} doesn't exists"
-                )
+                print(f"Image with relative path {row['relative_path']} doesn't exist.")
             created_txts += int(exists)
 
         print(f"Created {created_txts} files")

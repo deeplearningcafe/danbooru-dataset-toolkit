@@ -5,52 +5,94 @@ from typing import List
 import os
 
 META_TAGS_TO_INCLUDE = {
-    "highres", "absurdres", "ultra-detailed", "official_art",
-    "novel_illustration", "official_wallpaper"
+    "highres",
+    "absurdres",
+    "ultra-detailed",
+    "official_art",
+    "novel_illustration",
+    "official_wallpaper",
 }
 RATINGS = {"e": "explicit", "q": "questionable", "s": "sensitive", "g": "general"}
 # It looks for a word boundary, one or more digits, 'boy' or 'girl',
 # and an optional 's', all followed by another word boundary.
-PERSON_COUNT_REGEX = re.compile(r'\b\d+\+?(?:boy|girl)s?\b')
+PERSON_COUNT_REGEX = re.compile(r"\b\d+\+?(?:boy|girl)s?\b")
 
 QUALITY_TIER_AES = {
     "masterpiece": ["best quality", "very aesthetic"],
     "good score": ["amazing quality", "great quality", "aesthetic"],
     "bad score": ["normal quality", "bad quality", "displeasing"],
-    "worse score": ["worst quality", "very displeasing"]
+    "worse score": ["worst quality", "very displeasing"],
 }
 
 # --- Validation Constants ---
 HAIR_LENGTH_TAGS = {
-    'long hair', 'medium hair', 'short hair', 'very long hair',
-    'very short hair', 'absurdly long hair'
+    "long hair",
+    "medium hair",
+    "short hair",
+    "very long hair",
+    "very short hair",
+    "absurdly long hair",
 }
 
 EYE_COLOR_TAGS = {
-    'blue eyes', 'red eyes', 'brown eyes', 'green eyes', 'purple eyes',
-    'yellow eyes', 'pink eyes', 'black eyes', 'aqua eyes', 'orange eyes',
-    'grey eyes', 'silver eyes', 'white eyes', 'multicolored eyes'
+    "blue eyes",
+    "red eyes",
+    "brown eyes",
+    "green eyes",
+    "purple eyes",
+    "yellow eyes",
+    "pink eyes",
+    "black eyes",
+    "aqua eyes",
+    "orange eyes",
+    "grey eyes",
+    "silver eyes",
+    "white eyes",
+    "multicolored eyes",
 }
 
 HAIR_COLOR_TAGS = {
-    'blonde hair', 'brown hair', 'black hair', 'blue hair', 'purple hair',
-    'pink hair', 'red hair', 'white hair', 'green hair', 'grey hair',
-    'orange hair', 'silver hair', 'aqua hair', 'multicolored hair',
-    'two-tone hair'
+    "blonde hair",
+    "brown hair",
+    "black hair",
+    "blue hair",
+    "purple hair",
+    "pink hair",
+    "red hair",
+    "white hair",
+    "green hair",
+    "grey hair",
+    "orange hair",
+    "silver hair",
+    "aqua hair",
+    "multicolored hair",
+    "two-tone hair",
 }
 
 # Structural conflicts: If Key is present, remove Values.
 # We check these against the "base" concept (e.g. "black pants" -> "pants")
 CLOTHING_CONFLICTS = {
-    'bikini': {'panties', 'shorts', 'bra'},
-    'swimsuit': {'panties', 'shorts'},
-    'completely nude': {
-        'shirt', 't-shirt', 'pants', 'jeans', 'skirt', 'dress',
-        'bikini', 'swimsuit', 'jacket', 'coat', 'sweater', 'kimono',
-        'bra', 'panties'
+    "bikini": {"panties", "shorts", "bra"},
+    "swimsuit": {"panties", "shorts"},
+    "completely nude": {
+        "shirt",
+        "t-shirt",
+        "pants",
+        "jeans",
+        "skirt",
+        "dress",
+        "bikini",
+        "swimsuit",
+        "jacket",
+        "coat",
+        "sweater",
+        "kimono",
+        "bra",
+        "panties",
     },
-    'bra': {'bikini'},
+    "bra": {"bikini"},
 }
+
 
 def format_danbooru_tag_inverse(formatted_tag: str) -> str:
     """
@@ -73,10 +115,11 @@ def format_danbooru_tag_inverse(formatted_tag: str) -> str:
         'star_(symbol)'
     """
     # Un-escape parentheses
-    unescaped = formatted_tag.replace(r'\(', '(').replace(r'\)', ')')
+    unescaped = formatted_tag.replace(r"\(", "(").replace(r"\)", ")")
     # Replace spaces with underscores
-    original_tag = unescaped.replace(' ', '_')
+    original_tag = unescaped.replace(" ", "_")
     return original_tag
+
 
 def format_danbooru_tag(tag: str) -> str:
     """
@@ -99,12 +142,13 @@ def format_danbooru_tag(tag: str) -> str:
         'star \(symbol\)'
     """
     # Replace underscores with spaces
-    formatted_tag = tag.replace('_', ' ')
+    formatted_tag = tag.replace("_", " ")
 
     # Escape parentheses with backslashes
-    formatted_tag = formatted_tag.replace('(', r'\(').replace(')', r'\)')
+    formatted_tag = formatted_tag.replace("(", r"\(").replace(")", r"\)")
 
     return formatted_tag
+
 
 def normalize_tag_string(prompt: str) -> str:
     """
@@ -127,9 +171,10 @@ def normalize_tag_string(prompt: str) -> str:
     # Split by comma, strip whitespace, replace internal spaces with
     # underscores, and join with a single space.
     tags = [
-        format_danbooru_tag_inverse(t.strip())for t in prompt.split(',') if t.strip()
+        format_danbooru_tag_inverse(t.strip()) for t in prompt.split(",") if t.strip()
     ]
-    return ' '.join(tags)
+    return " ".join(tags)
+
 
 def format_tag_string(tag_string: str) -> str:
     """
@@ -156,11 +201,12 @@ def format_tag_string(tag_string: str) -> str:
 
     # The sequence of replacements is optimized for speed and correctness.
     return (
-        tag_string.replace('(', r'\(')
-                  .replace(')', r'\)')
-                  .replace(' ', ', ')
-                  .replace('_', ' ')
+        tag_string.replace("(", r"\(")
+        .replace(")", r"\)")
+        .replace(" ", ", ")
+        .replace("_", " ")
     )
+
 
 def extract_and_remove_person_tags(general_tags_raw: str):
     """
@@ -183,8 +229,8 @@ def extract_and_remove_person_tags(general_tags_raw: str):
 
     # If no digit-based tags are found, check for 'solo' or 'duo'
     if not found_tags:
-        if 'solo' in general_tags_raw.split(' '):
-            found_tags = ['solo']
+        if "solo" in general_tags_raw.split(" "):
+            found_tags = ["solo"]
 
     if not found_tags:
         return "", general_tags_raw
@@ -193,69 +239,70 @@ def extract_and_remove_person_tags(general_tags_raw: str):
     # e.g., r'\b(1boy|3girls)\b'
     # The word boundaries (\b) are crucial to avoid partial matches
     # like removing 'boy' from 'cowboy'.
-    removal_pattern = r'\b(' + '|'.join(found_tags) + r')\b'
+    removal_pattern = r"\b(" + "|".join(found_tags) + r")\b"
 
     # Remove the tags from the original string
-    remaining_tags = re.sub(removal_pattern, '', general_tags_raw)
+    remaining_tags = re.sub(removal_pattern, "", general_tags_raw)
 
     # Clean up any resulting extra whitespace
-    remaining_tags = re.sub(r'\s+', ' ', remaining_tags).strip()
+    remaining_tags = re.sub(r"\s+", " ", remaining_tags).strip()
 
     # Join the found tags into a clean, comma-separated string
     person_count_str = ", ".join(found_tags)
 
     return person_count_str, remaining_tags
 
+
 def count_tags(
-        df: pd.DataFrame,
-        normalized_upsampled_tags: pd.Series=None,
-        output_path: str="tag_counts_report.csv",
-    ):
-        """
-        Creates a csv file containing the counts of each general, artists and character
-        tags inside the provided dataframe.
+    df: pd.DataFrame,
+    normalized_upsampled_tags: pd.Series = None,
+    output_path: str = "tag_counts_report.csv",
+):
+    """
+    Creates a csv file containing the counts of each general, artists and character
+    tags inside the provided dataframe.
 
-        Args:
-            df (pd.DataFrame): The dataframe to count from, it must contain columns
-            ['tag_string_general', 'tag_string_character', 'tag_string_artist'].
-            normalized_upsampled_tags (pd.Series): Optional series containing the
-            upsampled tags of the dataframe.
-            output_path (str): Path to save the csv file.
+    Args:
+        df (pd.DataFrame): The dataframe to count from, it must contain columns
+        ['tag_string_general', 'tag_string_character', 'tag_string_artist'].
+        normalized_upsampled_tags (pd.Series): Optional series containing the
+        upsampled tags of the dataframe.
+        output_path (str): Path to save the csv file.
 
-        Returns:
-            None
-        """
-        def get_counts(series: pd.Series) -> pd.Series:
-            """Uses explode and value_counts for fast counting."""
-            return series.dropna().str.split(' ').explode().value_counts()
+    Returns:
+        None
+    """
 
-        # Combine general and upsampled tags for a unified count
-        general_tags_series = pd.concat([
-            df['tag_string_general'], normalized_upsampled_tags
-        ])
-        general_counts = get_counts(general_tags_series)
-        character_counts = get_counts(df['tag_string_character'])
-        artist_counts = get_counts(df['tag_string_artist'])
+    def get_counts(series: pd.Series) -> pd.Series:
+        """Uses explode and value_counts for fast counting."""
+        return series.dropna().str.split(" ").explode().value_counts()
 
-        # --- 3. Generate and save the tag count report ---
-        print(f"Saving tag counts to '{output_path}'...")
-        report_dfs = []
-        for counts, name in [
-            (general_counts, 'general'),
-            (character_counts, 'character'),
-            (artist_counts, 'artist')
-        ]:
-            report_df = counts.reset_index()
-            report_df.columns = ['tag', 'count']
-            report_df['category'] = name
-            report_dfs.append(report_df)
+    # Combine general and upsampled tags for a unified count
+    general_tags_series = pd.concat(
+        [df["tag_string_general"], normalized_upsampled_tags]
+    )
+    general_counts = get_counts(general_tags_series)
+    character_counts = get_counts(df["tag_string_character"])
+    artist_counts = get_counts(df["tag_string_artist"])
 
-        full_report = pd.concat(report_dfs, ignore_index=True)
+    # --- 3. Generate and save the tag count report ---
+    print(f"Saving tag counts to '{output_path}'...")
+    report_dfs = []
+    for counts, name in [
+        (general_counts, "general"),
+        (character_counts, "character"),
+        (artist_counts, "artist"),
+    ]:
+        report_df = counts.reset_index()
+        report_df.columns = ["tag", "count"]
+        report_df["category"] = name
+        report_dfs.append(report_df)
 
-        full_report[['category', 'tag', 'count']].to_csv(
-            output_path, index=False
-        )
-        print(f"Saved {len(full_report)} unique tag counts to report.")
+    full_report = pd.concat(report_dfs, ignore_index=True)
+
+    full_report[["category", "tag", "count"]].to_csv(output_path, index=False)
+    print(f"Saved {len(full_report)} unique tag counts to report.")
+
 
 def analyze_tag_distribution(csv_files: List[str]) -> pd.DataFrame:
     """
@@ -284,7 +331,7 @@ def analyze_tag_distribution(csv_files: List[str]) -> pd.DataFrame:
         "masterpiece": "masterpiece",
         "good": "good",
         "bad": "bad",
-        "worse": "worse"
+        "worse": "worse",
     }
 
     all_dfs = []
@@ -296,23 +343,24 @@ def analyze_tag_distribution(csv_files: List[str]) -> pd.DataFrame:
         try:
             # Extracts bucket name, e.g., 'tag_counts_good.csv' -> 'good'
             base_name = os.path.basename(file_path)
-            bucket_name = base_name.replace('tag_counts_', '').replace('.csv', '')
+            bucket_name = base_name.replace("tag_counts_", "").replace(".csv", "")
             if bucket_name not in bucket_map:
-                print(f"Warning: Unrecognized bucket '{bucket_name}' in "
-                      f"file {file_path}. Skipping.")
+                print(
+                    f"Warning: Unrecognized bucket '{bucket_name}' in "
+                    f"file {file_path}. Skipping."
+                )
                 continue
         except Exception:
-            print(f"Warning: Could not parse bucket name from {file_path}. "
-                  "Skipping.")
+            print(f"Warning: Could not parse bucket name from {file_path}. Skipping.")
             continue
 
         df = pd.read_csv(file_path)
         # Rename 'count' to 'count_{bucket_name}' for clarity after merge
         count_col_name = f"count_{bucket_map[bucket_name]}"
-        df.rename(columns={'count': count_col_name}, inplace=True)
+        df.rename(columns={"count": count_col_name}, inplace=True)
 
-        if 'category' in df.columns and 'tag' in df.columns:
-            all_dfs.append(df[['category', 'tag', count_col_name]])
+        if "category" in df.columns and "tag" in df.columns:
+            all_dfs.append(df[["category", "tag", count_col_name]])
         else:
             print(f"Warning: Required columns missing in {file_path}.")
 
@@ -323,48 +371,43 @@ def analyze_tag_distribution(csv_files: List[str]) -> pd.DataFrame:
     # Use reduce to iteratively merge all dataframes on category and tag.
     # 'outer' join ensures that tags present in any file are included.
     merged_df = reduce(
-        lambda left, right: pd.merge(
-            left, right, on=['category', 'tag'], how='outer'
-        ),
-        all_dfs
+        lambda left, right: pd.merge(left, right, on=["category", "tag"], how="outer"),
+        all_dfs,
     )
 
     # Replace NaN (for tags not in a bucket) with 0 and cast to integer.
-    count_cols = [col for col in merged_df if col.startswith('count_')]
+    count_cols = [col for col in merged_df if col.startswith("count_")]
     merged_df[count_cols] = merged_df[count_cols].fillna(0).astype(int)
 
     return merged_df
 
-def get_tags_from_knowledge_bases(
-    knowledge_bases_paths: List[str]
-) -> List[str]:
-    """Extracts artist and character tags from knowledge base files."""
+
+def get_tags_from_file(file_path: str) -> List[str]:
+    """Extracts tags from a single text file in Danbooru format."""
+    tags = []
+    if not os.path.exists(file_path):
+        print(f"Warning: File not found at '{file_path}'. Skipping.")
+        return tags
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                tag = format_danbooru_tag_inverse(line.strip())
+                if tag:
+                    tags.append(tag)
+    except Exception as e:
+        print(f"Error processing file '{file_path}': {e}")
+    return tags
+
+
+def get_tags_from_knowledge_bases(knowledge_bases_paths: List[str]) -> List[str]:
+    """Extracts tags from all txt knowledge base files."""
     tags = set()
     for path in knowledge_bases_paths:
-        if not os.path.exists(path):
-            print(f"Warning: File not found at '{path}'. Skipping.")
-            continue
-        try:
-            if path.endswith(".txt"):
-                with open(path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        artist_tag = format_danbooru_tag_inverse(line.strip())
-                        if artist_tag:
-                            tags.add(artist_tag)
-            elif path.endswith(".xlsx"):
-                char_df = pd.read_excel(path)
-                if 'character_tag' in char_df.columns:
-                    for char_tag in char_df['character_tag'].dropna():
-                        if char_tag:
-                            tags.add(char_tag)
-        except Exception as e:
-            print(f"Error processing file '{path}': {e}")
+        tags.update(get_tags_from_file(path))
     return list(tags)
 
-def validate_upsampled_batch(
-    upsampled_tags: str,
-    row: pd.DataFrame
-) -> str:
+
+def validate_upsampled_batch(upsampled_tags: str, row: pd.DataFrame) -> str:
     """
     Validates and cleans upsampled tags based on Danbooru metadata and heuristics.
 
@@ -382,17 +425,25 @@ def validate_upsampled_batch(
     char_count = 0
 
     # Try to get from explicit count column
-    if 'tag_count_character' in row and row['tag_count_character'] is not None:
+    if "tag_count_character" in row and row["tag_count_character"] is not None:
         try:
-            char_count = int(row['tag_count_character'])
+            char_count = int(row["tag_count_character"])
         except (ValueError, TypeError):
             char_count = 0
 
     # If 0 or missing, try to find "1girl", "2boys" in the general tags
     if char_count == 0:
-        gen_tags = str(row.get('tag_string_general', '')).split()
-        count_tags = ['1girl', '1boy', '2girls', '2boys', '3girls', '3boys',
-                      '4girls', '4boys',]
+        gen_tags = str(row.get("tag_string_general", "")).split()
+        count_tags = [
+            "1girl",
+            "1boy",
+            "2girls",
+            "2boys",
+            "3girls",
+            "3boys",
+            "4girls",
+            "4boys",
+        ]
         found_counts = []
         for t in gen_tags:
             if t in count_tags:
@@ -411,16 +462,16 @@ def validate_upsampled_batch(
         char_count = 1
 
     # 2. Analyze Original Prompt (Ground Truth)
-    original_prompt = str(row.get('original_prompt', '')).lower()
-    original_tags_list = [t.strip() for t in original_prompt.split(',') if t.strip()]
+    original_prompt = str(row.get("original_prompt", "")).lower()
+    original_tags_list = [t.strip() for t in original_prompt.split(",") if t.strip()]
 
     # Count existing attributes in the original prompt
     orig_hair_len_count = sum(1 for t in original_tags_list if t in HAIR_LENGTH_TAGS)
     orig_hair_col_count = sum(1 for t in original_tags_list if t in HAIR_COLOR_TAGS)
     orig_eye_col_count = sum(1 for t in original_tags_list if t in EYE_COLOR_TAGS)
 
-    has_heterochromia = 'heterochromia' in original_tags_list
-    has_multicolored = 'multicolored hair' in original_tags_list
+    has_heterochromia = "heterochromia" in original_tags_list
+    has_multicolored = "multicolored hair" in original_tags_list
 
     # 3. Define Limits
     # The limit is the number of characters.
@@ -430,7 +481,7 @@ def validate_upsampled_batch(
     max_eye_col = char_count + (1 if has_heterochromia else 0)
 
     # 4. Filter Upsampled Tags
-    upsampled_list = [t.strip() for t in upsampled_tags.split(',') if t.strip()]
+    upsampled_list = [t.strip() for t in upsampled_tags.split(",") if t.strip()]
     cleaned_tags = []
 
     # Track how many we have added from upsampled
@@ -440,7 +491,6 @@ def validate_upsampled_batch(
 
     for tag in upsampled_list:
         tag_clean = tag.strip()
-
 
         # Hair Length
         if tag_clean in HAIR_LENGTH_TAGS:
@@ -463,7 +513,7 @@ def validate_upsampled_batch(
         # Eye Color
         elif tag_clean in EYE_COLOR_TAGS:
             # Check for heterochromia in upsampled if not in original
-            if tag_clean == 'heterochromia':
+            if tag_clean == "heterochromia":
                 max_eye_col += 1
 
             if orig_eye_col_count >= max_eye_col:
