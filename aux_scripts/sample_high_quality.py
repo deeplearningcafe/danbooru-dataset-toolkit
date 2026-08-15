@@ -1,6 +1,7 @@
 import os
 import shutil
 import argparse
+import duckdb
 import pandas as pd
 import yaml
 from pathlib import Path
@@ -10,10 +11,7 @@ from src.utils.loader import resolve_image_path
 def sample_high_quality(
     tiers_csv: str, labels_csv: str, output_dir: str, num_samples: int
 ):
-    """
-    Samples high quality images (masterpiece, good_score) and copies
-    them to a specified directory for analysis.
-    """
+    """Samples high quality images and copies them to output directory."""
     config_path = "configs/config.yaml"
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -21,11 +19,12 @@ def sample_high_quality(
     seed = config.get("sampling", {}).get("random_seed", 42)
     print(f"Using random seed from config: {seed}")
 
-    print(f"Loading {tiers_csv} and {labels_csv}...")
-    df_tiers = pd.read_csv(tiers_csv, header=0)
-    df_labels = pd.read_csv(labels_csv, header=0)
+    print(f"Loading {tiers_csv} and {labels_csv} using DuckDB...")
+    conn = duckdb.connect()
+    df_tiers = conn.execute(f"SELECT * FROM read_csv_auto('{tiers_csv}')").df()
+    df_labels = conn.execute(f"SELECT * FROM read_csv_auto('{labels_csv}')").df()
+    conn.close()
 
-    # Parse global paths to create booru_id
     def extract_id(path_str):
         try:
             return int(Path(str(path_str)).stem)
@@ -33,13 +32,10 @@ def sample_high_quality(
             return -1
 
     df_labels["id"] = df_labels["relative_path"].apply(extract_id)
-
-    # Left join to get global paths and final tiers together
     df_merged = pd.merge(df_labels, df_tiers, on="id", how="left")
 
     target_tiers = ["masterpiece", "good_score"]
     out_path = Path(output_dir)
-
     copied_ids = set()
 
     for tier in target_tiers:
@@ -53,8 +49,6 @@ def sample_high_quality(
 
         tier_dir = out_path / tier
         tier_dir.mkdir(parents=True, exist_ok=True)
-
-        print(f"Copying {n_samples} samples for '{tier}' to {tier_dir}...")
 
         copied = 0
         for _, row in df_sampled.iterrows():
@@ -84,7 +78,6 @@ def sample_high_quality(
         best_dir = out_path / "best"
         best_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Copying {n_samples} samples for 'best' to {best_dir}...")
         copied = 0
         for _, row in df_sampled.iterrows():
             raw_path = Path(str(row["relative_path"]))
@@ -103,15 +96,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Sample high quality images for visual analysis."
     )
-    parser.add_argument(
-        "--tiers_csv", required=True, help="Path to the final_tiers.csv"
-    )
+    parser.add_argument("--tiers_csv", required=True, help="Path to final_tiers.csv")
     parser.add_argument(
         "--labels_csv", required=True, help="Path to image_aesthetic_labels.csv"
     )
-    parser.add_argument(
-        "--output_dir", required=True, help="Directory to save the samples"
-    )
+    parser.add_argument("--output_dir", required=True, help="Directory to save samples")
     parser.add_argument("--num_samples", type=int, default=64, help="Samples per tier")
 
     args = parser.parse_args()

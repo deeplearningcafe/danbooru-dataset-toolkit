@@ -154,10 +154,14 @@ def encode_tag_weights(
     config_path: str = typer.Option(
         "configs/default_config.yaml", help="Path to the configuration file."
     ),
+    skip_encoding: bool = typer.Option(
+        True,
+        help="If True, it only computes and appends tag weights without encoding them.",
+    ),
 ):
     """Encodes tags weights to the metadata json file."""
     pipeline = DataPipeline(config_path)
-    pipeline.run_tag_weight_encoding()
+    pipeline.run_tag_weight_encoding(skip_encoding=skip_encoding)
 
 
 @app.command()
@@ -198,6 +202,17 @@ def encode_raw_images(
     """Encodes raw images and prompts into streaming Parquet shards."""
     pipeline = DataPipeline(config_path)
     pipeline.run_image_stream_encoding()
+
+
+@app.command()
+def sync_tiers(
+    config_path: str = typer.Option(
+        "configs/default_config.yaml", help="Path to the configuration file."
+    ),
+):
+    """Synchronizes on-disk images and prompts to match final_tiers.csv."""
+    pipeline = DataPipeline(config_path)
+    pipeline.run_sync_tiers()
 
 
 @app.command()

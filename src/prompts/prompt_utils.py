@@ -545,3 +545,24 @@ def validate_upsampled_batch(upsampled_tags: str, row: pd.DataFrame) -> str:
         cleaned_tags.append(tag_clean)
 
     return ", ".join(cleaned_tags)
+
+
+def sanitize_prompt(prompt_str: str) -> str:
+    """Sanitizes a Danbooru-style comma-separated prompt string.
+
+    Args:
+        prompt_str: The raw prompt string.
+    """
+    # Split by comma
+    tags = prompt_str.split(",")
+
+    cleaned_tags = []
+    for tag in tags:
+        # Strip leading/trailing whitespace and collapse internal duplicate spaces
+        cleaned = " ".join(tag.strip().split())
+        # Only keep non-empty tags (filters out leftover commas like ", ,")
+        if cleaned:
+            cleaned_tags.append(cleaned)
+
+    # Join with standard single-comma and single-space
+    return ", ".join(cleaned_tags)

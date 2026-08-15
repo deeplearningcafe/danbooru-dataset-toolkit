@@ -4,11 +4,13 @@ import re
 from tqdm import tqdm
 import json
 from transformers import CLIPTokenizer
+from typing import Optional
 from ..utils.loader import (
     load_all_parquets,
     parallel_scan_images,
     append_weight_to_json,
-    resolve_image_path,
+    build_id_path_map,
+    _read_dataset_duckdb,
 )
 from ..prompts.prompt_utils import (
     format_danbooru_tag_inverse,
@@ -36,7 +38,6 @@ class PromptGenerator:
     def __init__(self, config: dict):
         self.config = config
         self.tokenizer = CLIPTokenizer.from_pretrained(config["tokenizer_path"])
-        self.image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
     def _get_metadata_tag(self, row):
         """
@@ -57,26 +58,26 @@ class PromptGenerator:
             return ", ".join(tags)
         return ""
 
-    def _format_year(self, year):
+    def _format_year(self, year: Optional[int]) -> str:
         """
-        Determines the metadata tag based on image dimensions.
+        Maps a 4-digit year to its NovelAI era tag and year modifier.
+        Returns an empty string if year is None or invalid.
         """
-        choice = random.choice([0, 1])
-        year_str = "newest"
-        num_year = int(year[-2:])
-        if num_year <= 17:
-            year_str = "oldest"
-        elif 17 < num_year <= 19:
-            year_str = "old"
-        elif 19 < num_year <= 20:
-            year_str = "modern"
-        elif 20 < num_year <= 22:
-            year_str = "recent"
+        if year is None:
+            return ""
 
-        # include 50% times the year to improve generalization
-        if choice:
-            year_str += f", {year}"
-        return year_str
+        if year <= 2017:
+            era = "oldest"
+        elif year <= 2019:
+            era = "old"
+        elif year <= 2020:
+            era = "modern"
+        elif year <= 2022:
+            era = "recent"
+        else:
+            era = "newest"
+
+        return f"{era}, year {year}"
 
     def load_booru_df(
         self,
@@ -569,7 +570,7 @@ class PromptGenerator:
         self,
         df: pd.DataFrame,
         root_dir: str,
-        metadata_path: str,
+        metadata_path: Optional[str] = None,
         num_workers: int = 4,
     ) -> None:
         """
@@ -594,27 +595,30 @@ class PromptGenerator:
         print("Starting tag counting and sample weighting process...")
         root_path = Path(root_dir)
 
-        # --- 1. Load valid sample IDs from metadata ---
-        print(f"Loading metadata from '{metadata_path}'...")
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-            valid_booru_ids = {
-                str(item["booru_id"]) for item in metadata.get("sample_mapping")
-            }
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"Fatal: Could not load or parse metadata. {e}")
-            return
-        print(f"Found {len(valid_booru_ids)} valid samples in metadata.")
+        valid_booru_ids = set()
+        if metadata_path and os.path.exists(metadata_path):
+            print(f"Loading metadata from '{metadata_path}'...")
+            try:
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+                valid_booru_ids = {
+                    str(item["booru_id"]) for item in metadata.get("sample_mapping", [])
+                }
+                print(f"Found {len(valid_booru_ids)} valid samples in meta.")
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                print(f"Warning: Could not parse metadata ({e}). Scanning all.")
 
-        # --- 2. Discover all .txt files and filter them ---
         print(f"Scanning for all prompt files in '{root_dir}'...")
         all_txt_files = parallel_scan_images(
             root_path, num_workers=num_workers, prompts=True
         )
-        valid_txt_paths = {
-            p.stem: p for p in all_txt_files if p.stem in valid_booru_ids
-        }
+
+        if valid_booru_ids:
+            valid_txt_paths = {
+                p.stem: p for p in all_txt_files if p.stem in valid_booru_ids
+            }
+        else:
+            valid_txt_paths = {p.stem: p for p in all_txt_files}
 
         print(f"Found {len(valid_txt_paths)} matching .txt files.")
         if not valid_txt_paths:
@@ -675,13 +679,19 @@ class PromptGenerator:
 
         print("Finished appending tag weights to all valid JSON files.")
 
-    def construct_prompt_string(self, row: pd.Series) -> str:
+    def construct_prompt_string(
+        self, row: pd.Series, general_tags_at_end: bool = False
+    ) -> str:
         """
         Constructs a structured prompt string from a DataFrame row.
 
         The format is:
-        person count ||| character names ||| rating ||| general tags |||
-        artist ||| score range based rating ||| year modifier
+            person count ||| character names ||| rating ||| general tags |||
+            artist ||| score range based rating ||| year modifier
+
+        If general_tags_at_end:
+            person count ||| character names ||| rating ||| artist |||
+            score range based rating ||| year modifier ||| general tags |||
 
         Args:
             row (pd.Series): A row from the DataFrame.
@@ -744,8 +754,15 @@ class PromptGenerator:
                 aesthetic_class += ", " + ", ".join(present_meta_tags)
 
         # 7. Year Modifier
-        year = f"year {row.get('year', '')}"
-        year = self._format_year(year)
+        raw_year = row.get("year")
+        year_val = None
+        if pd.notna(raw_year) and raw_year != "":
+            try:
+                year_val = int(float(raw_year))
+            except (ValueError, TypeError):
+                year_val = None
+
+        year = self._format_year(year_val)
 
         if self.tokenizer is None:
             # Assemble the final prompt string
@@ -777,7 +794,8 @@ class PromptGenerator:
             truncation=False,  # Don't truncate as we want length
             return_length=True,
         )
-        lengths.append(prompt_prefix_tokens["length"] - 2)
+        # transformers > 5.0 returns lists
+        lengths.append(prompt_prefix_tokens["length"][0] - 2)
         # remove last token EOS
         prompt_prefix_tokens = prompt_prefix_tokens["input_ids"][:-1]
 
@@ -790,7 +808,7 @@ class PromptGenerator:
             truncation=False,  # Don't truncate as we want length
             return_length=True,
         )
-        lengths.append(prompt_suffix_tokens["length"] - 2)
+        lengths.append(prompt_suffix_tokens["length"][0] - 2)
         # remove the first token BOS
         prompt_suffix_tokens = prompt_suffix_tokens["input_ids"][1:]
 
@@ -803,7 +821,7 @@ class PromptGenerator:
             return_length=True,
         )
         # remove the 2 commas before and after the general tags
-        general_tags_len = general_tags_tokens["length"] - 4
+        general_tags_len = general_tags_tokens["length"][0] - 4
 
         free_tokens -= general_tags_len
         decoded_sliced_input_ids = ""
@@ -820,12 +838,20 @@ class PromptGenerator:
         )["input_ids"][1:-1]
 
         # 4. Assemble the final prompt using the defined separator
-        all_parts = [
-            prompt_prefix_str,
-            general_tags,
-            decoded_sliced_input_ids,
-            prompt_suffix_str,
-        ]
+        if general_tags_at_end:
+            all_parts = [
+                prompt_prefix_str,
+                prompt_suffix_str,
+                general_tags,
+                decoded_sliced_input_ids,
+            ]
+        else:
+            all_parts = [
+                prompt_prefix_str,
+                general_tags,
+                decoded_sliced_input_ids,
+                prompt_suffix_str,
+            ]
         all_parts = [prompt for prompt in all_parts if len(prompt) > 0]
         final_prompt = ", ".join(all_parts)
 
@@ -844,6 +870,7 @@ class PromptGenerator:
         faces_mode: bool = False,
         character_list: list = None,
         artist_list: list = None,
+        exclude_path: Optional[str] = None,
     ):
         """
         Generates and saves a .txt prompt file for each row in the DataFrame.
@@ -862,13 +889,13 @@ class PromptGenerator:
 
         # Pre-calculate year for efficiency
         if "created_at" in df.columns:
-            df["year"] = (
-                pd.to_datetime(df["created_at"], utc=True, errors="coerce")
-                .dt.year.fillna("")
-                .astype(str)
-            )
+            df["year"] = pd.to_datetime(
+                df["created_at"], utc=True, errors="coerce"
+            ).dt.year.astype("Int64")
+        elif "year" in df.columns:
+            df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
         else:
-            df["year"] = ""  # Ensure column exists
+            df["year"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
 
         # --- Masking Characters and Artists ---
         if character_list:
@@ -886,43 +913,55 @@ class PromptGenerator:
                 if pd.notna(x)
                 else ""
             )
+        if exclude_path and os.path.exists(exclude_path):
+            exclude_df = _read_dataset_duckdb(exclude_path)
+
+        exclude_ids = (
+            set(exclude_df["id"])
+            if exclude_df is not None and "id" in exclude_df
+            else set()
+        )
+        df = df[~df["id"].isin(exclude_ids)]
 
         tokenizer_path = f"{model_path}tokenizer"
         self.tokenizer = CLIPTokenizer.from_pretrained(tokenizer_path)
 
         out_path_obj = Path(output_dir)
+        id_path_map = build_id_path_map(out_path_obj)
         # Use tqdm for a progress bar, as this can be a slow I/O operation
         created_txts = 0
         for _, row in tqdm(
             df.iterrows(), total=df.shape[0], desc="Writing prompt files"
         ):
-            prompt_text, tokens = self.construct_prompt_string(row)
+            img_id = int(row["id"])
+            actual_img_path = id_path_map.get(img_id)
 
-            relative_path_str = row["relative_path"].replace("\\", os.sep)
-            relative_no_ext = os.path.splitext(relative_path_str)[0]
+            if actual_img_path is None or not actual_img_path.exists():
+                print(
+                    f"Image ID {img_id} ({row.get('relative_path')}) "
+                    f"doesn't exist on disk. Skipping."
+                )
+                continue
 
-            # Resolve image path check (handles original and .avif)
-            full_img_path = out_path_obj / relative_path_str
-            actual_img_path = resolve_image_path(full_img_path)
-            exists = actual_img_path.exists()
+            prompt_text, tokens = self.construct_prompt_string(
+                row, self.config.get("general_tags_at_end", False)
+            )
 
-            if exists:
-                file_path = os.path.join(output_dir, f"{relative_no_ext}.txt")
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(prompt_text)
+            # Prompts are written adjacent to the resolved image file
+            txt_path = actual_img_path.with_suffix(".txt")
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(prompt_text)
 
-                if create_json_files:
-                    data = {
-                        "prefix_tokens": tokens[0],
-                        "general_tokens": tokens[1],
-                        "suffix_tokens": tokens[2],
-                    }
-                    file_path = os.path.join(output_dir, f"{relative_no_ext}.json")
-                    with open(file_path, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=4)
+            if create_json_files:
+                data = {
+                    "prefix_tokens": tokens[0],
+                    "general_tokens": tokens[1],
+                    "suffix_tokens": tokens[2],
+                }
+                json_path = actual_img_path.with_suffix(".json")
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
 
-            if not exists:
-                print(f"Image with relative path {row['relative_path']} doesn't exist.")
-            created_txts += int(exists)
+            created_txts += 1
 
-        print(f"Created {created_txts} files")
+        print(f"Created {created_txts} prompt files.")

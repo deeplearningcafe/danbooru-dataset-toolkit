@@ -7,7 +7,7 @@ import time
 import threading
 from pathlib import Path
 from typing import List, Optional
-from ..utils.loader import IMAGE_SUFFIXES
+from ..utils.loader import IMAGE_SUFFIXES, build_id_path_map
 
 HAS_CURL = False
 try:
@@ -62,11 +62,24 @@ class Downloader:
         headers,
         output_dir,
         character_list: Optional[List[str]] = None,
+        id_path_map: Optional[dict] = None,
     ):
+        """Downloads a single image with retry and disk cache lookup.
+
+        Checks id_path_map to avoid re-downloading existing images whose
+        quality tier or file extension (.avif) has changed.
         """
-        Downloads a single image with a retry mechanism for transient errors.
-        Returns the relative path on success, None on failure.
-        """
+        img_id = int(row["id"])
+        out_path_obj = Path(output_dir)
+
+        # Skip HTTP request if image already exists anywhere on disk
+        if id_path_map and img_id in id_path_map:
+            existing_path = id_path_map[img_id]
+            if existing_path.exists():
+                try:
+                    return str(existing_path.relative_to(out_path_obj))
+                except ValueError:
+                    return str(existing_path)
         url = row.get("large_file_url", "")
         # Pandas Series.get() returns NaN if the column exists but is empty.
         # We need to explicitly check for NaN or non-string values.
@@ -239,6 +252,10 @@ class Downloader:
         else:
             print(f"Downloading images for {', '.join(character_list)} characters")
 
+        print("Building on-disk ID map to avoid redundant downloads...")
+        id_path_map = build_id_path_map(Path(output_dir))
+        print(f"Found {len(id_path_map)} existing files on disk.")
+
         # Correctly slice the DataFrame to respect max_downloads
         if self.max_downloads is not None:
             end_index = start_index + self.max_downloads
@@ -261,6 +278,7 @@ class Downloader:
                     headers,
                     output_dir,
                     character_list,
+                    id_path_map,
                 ): index
                 for index, row in df_subset.iterrows()
             }

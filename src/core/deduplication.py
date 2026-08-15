@@ -1,4 +1,5 @@
 import cv2
+from PIL import Image
 import faiss
 import numpy as np
 import shutil
@@ -9,7 +10,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import re
-from ..utils.loader import load_prior_knowledge_df, IMAGE_SUFFIXES
+from ..utils.loader import load_prior_knowledge_df, IMAGE_SUFFIXES, resolve_image_path
 from ..prompts.prompt_utils import format_danbooru_tag_inverse
 
 # Set up logging
@@ -67,14 +68,13 @@ def _hash_batch_worker(paths: list[Path]):
     batch_hashes = []
     batch_valid_paths = []
     for path in paths:
+        actual_path = resolve_image_path(path)
         try:
-            image = cv2.imread(str(path))
-            if image is None:
-                logger.warning(f"Could not read image, skipping: {path}")
-                continue
+            with Image.open(actual_path) as pil_img:
+                # Convert PIL image to RGB numpy array for cv2 pHash
+                img_np = np.array(pil_img.convert("RGB"))
 
-            # The compute method returns a numpy array, we append it directly
-            batch_hashes.append(phasher.compute(image)[0])
+            batch_hashes.append(phasher.compute(img_np)[0])
             batch_valid_paths.append(path)
         except Exception as e:
             logger.error(f"Error hashing {path}: {e}")

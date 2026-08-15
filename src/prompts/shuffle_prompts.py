@@ -1,4 +1,5 @@
 import random
+
 # Define constants for special token IDs for clarity and maintainability.
 # These correspond to the CLIP tokenizer used in Stable Diffusion.
 START_OF_TEXT_ID = 49406
@@ -10,7 +11,8 @@ BRACKET_COMMA_ID = 2361
 DELIMITER_IDS = {COMMA_ID, BRACKET_COMMA_ID}
 MAX_LENGTH = 227
 
-def parse_input_ids(token_ids: list[int], exclude_special_tokens:bool=True):
+
+def parse_input_ids(token_ids: list[int], exclude_special_tokens: bool = True):
     # Isolate the core prompt tokens, excluding the start and end tokens.
     # This ensures they are not partt of the shuffling process.
     core_tokens = token_ids
@@ -45,7 +47,12 @@ def parse_input_ids(token_ids: list[int], exclude_special_tokens:bool=True):
 
     return tags
 
-def reconstruct_input_ids(tags:list[list[int]], include_special_tokens:bool=True, include_comma_last:bool=False):
+
+def reconstruct_input_ids(
+    tags: list[list[int]],
+    include_special_tokens: bool = True,
+    include_comma_last: bool = False,
+):
     shuffled_core_tokens = []
     num_tags = len(tags)
     last_tag = 0 if include_comma_last else 1
@@ -60,11 +67,12 @@ def reconstruct_input_ids(tags:list[list[int]], include_special_tokens:bool=True
     # Combine the start token, the shuffled core, and the end token.
     return [START_OF_TEXT_ID] + shuffled_core_tokens + [END_OF_TEXT_ID]
 
+
 def shuffle_prompt_token_ids(
     token_ids: list[int],
     use_dropout: bool = False,
     prompt_len: int = 0,
-    include_special_tokens:bool=True,
+    include_special_tokens: bool = True,
 ) -> list[int]:
     """
     Shuffles the tags within a tokenized prompt.
@@ -101,28 +109,31 @@ def shuffle_prompt_token_ids(
     # Shuffle the list of tags. This is the core randomization step.
     random.shuffle(tags)
 
-    shuffled_tokens = reconstruct_input_ids(tags, include_special_tokens, include_comma_last=not include_special_tokens)
+    shuffled_tokens = reconstruct_input_ids(
+        tags, include_special_tokens, include_comma_last=not include_special_tokens
+    )
     return shuffled_tokens
 
+
 def split_upsampled_tags(
-        upsampled_tags:str,
-        free_tokens:int,
-        tokenizer,
-        return_last_token:bool=False,
-    ) -> str:
+    upsampled_tags: str,
+    free_tokens: int,
+    tokenizer,
+    return_last_token: bool = False,
+) -> str:
     if free_tokens < 1:
         if return_last_token:
             return "", None
         return ""
 
-    upsampled_tokens= tokenizer(
+    upsampled_tokens = tokenizer(
         upsampled_tags,
-        padding=False, # Don't pad here, just count tokens
-        truncation=False, # Don't truncate as we want length
+        padding=False,  # Don't pad here, just count tokens
+        truncation=False,  # Don't truncate as we want length
         return_length=True,
     )
     # if more than enough space then don't do anything
-    if (upsampled_tokens["length"]-2) < free_tokens:
+    if (upsampled_tokens["length"][0] - 2) < free_tokens:
         if return_last_token:
             # The last content token is at index -2, before the EOS token.
             last_token = upsampled_tokens["input_ids"][-2]
@@ -154,4 +165,3 @@ def split_upsampled_tags(
         last_token = sliced_input_ids[-2] if sliced_input_ids else None
         return decoded_sliced_input_ids, last_token
     return decoded_sliced_input_ids
-

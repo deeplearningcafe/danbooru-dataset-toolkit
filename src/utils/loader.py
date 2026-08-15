@@ -237,9 +237,7 @@ def parallel_scan_images(
 
 
 def resolve_image_path(path: Path) -> Path:
-    """
-    Resolves an image path by checking if the original path exists,
-    or if an AVIF version (.avif) exists on disk.
+    """Resolves image path by checking original path or .avif alternative.
 
     Args:
         path (Path): Target image Path object.
@@ -253,3 +251,41 @@ def resolve_image_path(path: Path) -> Path:
     if avif_path.exists():
         return avif_path
     return path
+
+
+def build_id_path_map(root_dir: Path) -> dict[int, Path]:
+    """Scans root_dir recursively and returns an ID-to-Path lookup map.
+
+    Supports all extensions (.png, .jpg, .jpeg, .webp, .avif) and
+    handles nested character and tier subdirectories in O(1) lookup.
+    """
+    id_map = {}
+    if not root_dir.exists():
+        return id_map
+
+    for p in root_dir.rglob("*"):
+        if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES:
+            try:
+                img_id = int(p.stem)
+                id_map[img_id] = p
+            except ValueError:
+                continue
+    return id_map
+
+
+def _read_dataset_duckdb(file_path: str) -> pd.DataFrame:
+    """Reads CSV/Parquet file using DuckDB for zero-copy performance."""
+    if not os.path.exists(file_path):
+        return pd.DataFrame()
+
+    conn = duckdb.connect()
+    if file_path.endswith(".parquet"):
+        df = conn.execute(f"SELECT * FROM read_parquet('{file_path}')").df()
+    elif file_path.endswith(".csv"):
+        df = conn.execute(f"SELECT * FROM read_csv_auto('{file_path}')").df()
+    else:
+        conn.close()
+        raise ValueError(f"Unsupported file format: {file_path}")
+
+    conn.close()
+    return df

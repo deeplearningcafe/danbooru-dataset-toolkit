@@ -71,56 +71,67 @@ The `default_config.yaml` has some characters and tags as reference. For the `ch
 
 All commands are run from your terminal.
 
-1.  **Generate Prior Knowledge Base**
-    This step processes your artist and character lists to create a unified database for sampling.
-    ```bash
-    python main.py generate-data --config-path configs/my_dataset_config.yaml
-    ```
+1. **Generate Prior Knowledge Base**
+   Processes artist and character lists to create a base database:
+   ```bash
+   python main.py generate-data --config-path configs/my_dataset_config.yaml
+   ```
 
-2.  **Sample Image IDs**
-    Filters the main Danbooru parquet files and samples image IDs based on your criteria (quality, ratings, tags, and prior knowledge base).
-    ```bash
-    python main.py sample --config-path configs/my_dataset_config.yaml
-    ```
+2. **Sample Image IDs**
+   Applies hierarchical fallback imputation, artist sample protection, and
+   quality tiering:
+   ```bash
+   python main.py sample --config-path configs/my_dataset_config.yaml
+   ```
 
-3.  **Download Images**
-    Downloads all images corresponding to the sampled IDs.
-    ```bash
-    python main.py download --config-path configs/my_dataset_config.yaml
-    ```
+3. **Download Image Delta**
+   Scans disk via `build_id_path_map` to skip existing files across any tier
+   or format (`.avif`, `.png`), downloading only newly sampled images:
+   ```bash
+   python main.py download --config-path configs/my_dataset_config.yaml
+   ```
 
-4.  **Deduplicate Images**
-    Finds and moves visually similar images to a separate folder for review.
-    ```bash
-    python main.py deduplicate --config-path configs/my_dataset_config.yaml --automatic-check
-    ```
+4. **Synchronize Tiers (When Re-sampling or Refining)**
+   Moves existing on-disk images, prompts (`.txt`), and tokens (`.json`) to
+   their updated tier directories (`0/`, `1/`, `2/`, `3/`) matching
+   `final_tiers.csv` or newly sampled tiers without re-downloading:
+   ```bash
+   python main.py sync-tiers --config-path configs/my_dataset_config.yaml
+   ```
 
-5.  **Classify & Upsample Prompts**
-    Runs a unified process to get aesthetic scores and upsample tags for all downloaded images, saving results to CSV files. **First we need to create the prompt files from the dataset**, both arguments are False by default so you can omitt them.
-    ```bash
-    python main.py generate-prompts --config-path configs/my_dataset_config.yaml --no-create-json --no-use-aesthetic
-    python main.py unified-aes-prompts --config-path configs/my_dataset_config.yaml
-    ```
-    As this step uses the gpu, the processing can take quite a lot of time for old gpus. For reference on a gtx 1660 super the maximum batch size is 32, and it takes around 6 hours for 200K samples.
+5. **Deduplicate Images**
+   Isolates visually similar images:
+   ```bash
+   python main.py deduplicate --config-path configs/my_dataset_config.yaml --automatic-check
+   ```
 
-6.  **Generate Final Prompt Files**
-    Combines all metadata (original tags, upsampled tags, aesthetic scores) and creates the final `.json` caption files for each image.
-    ```bash
-    python main.py generate-prompts --config-path configs/my_dataset_config.yaml --create-json --use-aesthetic
-    ```
+6. **Classify & Upsample Prompts**
+   Unified aesthetic scoring and WD-SwinV2 tag upsampling:
+   ```bash
+   python main.py generate-prompts --config-path configs/my_dataset_config.yaml --no-create-json --no-use-aesthetic
+   python main.py unified-aes-prompts --config-path configs/my_dataset_config.yaml
+   ```
 
-7.  **Encode Latents into H5**
-    This is the final step. It processes all images and their JSON captions, encodes them into VAE and CLIP latents, and saves them into a sharded H5 file ready for training.
-    ```bash
-    python main.py encode-latents --config-path configs/my_dataset_config.yaml
-    ```
-    This step is extremely slow on old gpus. For reference on a gtx 1660 super the maximum batch size is 32, and it takes around 17 hours for 200K samples.
+7. **Generate Final Prompt Files**
+   Creates final `.txt` and `.json` token files co-located with image assets:
+   ```bash
+   python main.py generate-prompts --config-path configs/my_dataset_config.yaml --create-json --use-aesthetic
+   python main.py sync-tiers --config-path configs/my_dataset_config.yaml
+   ```
 
-8.  **Calculate and Store Tag Weights (Optional)**
-    If you need to handle tag imbalance, run this step to calculate tag weights and add them to the H5 metadata. For disk space constrained environments, the idea is to delete the images after encoding them and leaving only the text prompts which are needed to compute the tag weights.
-    ```bash
-    python main.py encode-tag-weights --config-path configs/my_dataset_config.yaml
-    ```
+8. **Encode Latents & Tag Weights**
+   Precomputes VAE latents, CLIP text tokens, and rarity weights into HDF5:
+   ```bash
+   python main.py encode-latents --config-path configs/my_dataset_config.yaml
+   python main.py encode-tag-weights --config-path configs/my_dataset_config.yaml
+   ```
+
+9. **Encode Raw Images & Tag Weights**
+   Instead of encoding into latents, we can include raw images, txt prompts and their weights in parquet format:
+   ```bash
+   python main.py encode-tag-weights --config-path configs/my_dataset_config.yaml --skip-encoding
+   python main.py encode-raw-images --config-path configs/my_dataset_config.yaml
+   ```
 
 ### All-in-One Command
 

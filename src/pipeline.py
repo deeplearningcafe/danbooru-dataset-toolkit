@@ -304,6 +304,7 @@ class DataPipeline:
                 self.config["download_dir"],
                 model_path=self.config["models_dir"],
                 create_json_files=create_json,
+                exclude_path=self.config["download"]["exclusion_list_csv"],
             )
             print("Prompt generation complete.")
         else:
@@ -413,12 +414,13 @@ class DataPipeline:
         encoder.encode_dataset()
         print("Latent encoding complete.")
 
-    def run_tag_weight_encoding(self):
+    def run_tag_weight_encoding(self, skip_encoding: bool = False):
         """
         Encodes the prepared dataset into a sharded H5 latent cache
         using the configuration specified in the YAML file.
         """
         print("--- Starting Step 5: Tag weight Encoding ---")
+        print(f"{skip_encoding} Skipping tag encoding")
         le_config = self.config["latent_encoding"]
         prompt_gen = PromptGenerator(self.config["prompts"])
 
@@ -436,15 +438,20 @@ class DataPipeline:
 
         if not final_df.empty:
             final_df = prompt_gen.refine_tiers_and_assign_final_class(final_df)
+            meta_path = f"{le_config['latents_output_dir']}/metadata.json"
             prompt_gen.count_and_weight_tags(
                 final_df,
                 root_dir=self.config["download_dir"],
-                metadata_path=f"{le_config['latents_output_dir']}/metadata.json",
+                metadata_path=meta_path if os.path.exists(meta_path) else None,
                 num_workers=le_config["num_workers"],
             )
             print("Prompt generation complete.")
         else:
             print("Final DataFrame is empty. No prompts generated.")
+
+        if skip_encoding:
+            print("Skipping tag encoding in the latents files.")
+            return
 
         # 1. Initialize the dataset for encoding.
         #    The input directory is the output of the prompt generation.
@@ -716,3 +723,20 @@ class DataPipeline:
 
         encoder.encode_dataset()
         print("Image streaming Parquet encoding complete.")
+
+    def run_sync_tiers(self):
+        """Synchronizes files on disk with the final tiers CSV."""
+        print("--- Starting Step: Tier Directory Synchronization ---")
+        from .core.sync_tiers import sync_tiers_on_disk
+
+        is_lora = self.config["sampling"].get("is_lora", False)
+        char_list = self.config["sampling"]["character_list"] if is_lora else None
+
+        sync_tiers_on_disk(
+            download_dir=self.config["download_dir"],
+            final_tiers_csv=self.config["prompts"]["final_tiers_csv"],
+            sampled_ids_csv=self.config["sampling"]["sampled_ids_csv"],
+            character_list=char_list,
+            verbose=True,
+        )
+        print("Tier synchronization complete.")
