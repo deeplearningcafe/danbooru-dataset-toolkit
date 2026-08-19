@@ -3,11 +3,15 @@
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
+import random
+from ..prompts.prompt_utils import sanitize_prompt
+from ..utils.loader import AESTHETIC_LABEL
 
 
 class ImageStreamEncoder:
@@ -22,6 +26,8 @@ class ImageStreamEncoder:
         length_tiers: List[int] = [77, 152, 227],
         parquet_compression: str = "SNAPPY",
         min_sample_count: int = 8,
+        seed: int = 42,
+        aesthetic_csv_path: Optional[str] = None,
     ):
         """Initialize the stream encoder.
 
@@ -42,8 +48,27 @@ class ImageStreamEncoder:
         self.max_length = self.length_tiers[-1]
         self.parquet_compression = parquet_compression
         self.min_sample_count = min_sample_count
+        self.seed = seed
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.aesthetic_df = None
+        if aesthetic_csv_path:
+            try:
+                df = pd.read_csv(aesthetic_csv_path, dtype={"id": str})
+                df = df.drop_duplicates(subset=["id"], keep="last")
+                self.aesthetic_df = df.set_index("id")
+
+                def get_tier_num(tier_val):
+                    if pd.isna(tier_val):
+                        return -1
+                    return AESTHETIC_LABEL.get(tier_val, -1)
+
+                self.aesthetic_df["final_tier_num"] = self.aesthetic_df[
+                    "final_tier"
+                ].apply(get_tier_num)
+            except Exception as e:
+                print(f"Warning: Failed to load aesthetic CSV: {e}")
 
         self.schema = pa.schema(
             [
@@ -57,6 +82,7 @@ class ImageStreamEncoder:
                 ("original_height", pa.int32()),
                 ("aspect_ratio", pa.float32()),
                 ("tier", pa.int32()),
+                ("aesthetic_tier", pa.int32()),
                 ("tag_weight", pa.float32()),
             ]
         )
@@ -72,14 +98,21 @@ class ImageStreamEncoder:
         """Extracts text string and token count from prompt object."""
         if isinstance(prompt_obj, dict):
             parts = []
-            for k in ["prefix_tokens", "general_tokens", "suffix_tokens"]:
+            length = 0
+            tokens_keys = ["prefix_tokens", "general_tokens", "suffix_tokens"]
+            for k in tokens_keys:
                 if k in prompt_obj and self.tokenizer:
                     toks = prompt_obj[k]
+                    length += len(toks)
                     text = self.tokenizer.decode(toks, skip_special_tokens=True)
                     if text.strip():
                         parts.append(text.strip())
             prompt_str = ", ".join(parts)
-            length = sum(len(prompt_obj.get(k, [])) for k in prompt_obj)
+            length = sum(
+                len(prompt_obj[k])
+                for k in tokens_keys
+                if k in prompt_obj and isinstance(prompt_obj[k], list)
+            )
         else:
             prompt_str = str(prompt_obj)
             if self.tokenizer:
@@ -90,11 +123,42 @@ class ImageStreamEncoder:
                     max_length=self.max_length,
                     return_length=True,
                 )
-                length = toks["length"]
+                length = toks["length"][0]
             else:
                 length = len(prompt_str.split())
 
         return prompt_str, length
+
+    def _read_prompt_and_weight(self, img_path: Path) -> Tuple[str, int, float]:
+        """Reads raw text prompt and tag weight from .txt and .json files."""
+        img_path = Path(img_path)
+        txt_path = img_path.with_suffix(".txt")
+
+        prompt_str = ""
+        prompt_obj = self.dataset._load_prompt(img_path, self.dataset.label_ext)
+        if txt_path.exists():
+            try:
+                with open(txt_path, "r", encoding="utf-8") as f:
+                    prompt_str = f.read().strip()
+                    prompt_str = sanitize_prompt(prompt_str)
+            except UnicodeDecodeError:
+                with open(txt_path, "r", encoding="utf-16") as f:
+                    prompt_str = f.read().strip()
+        else:
+            print(f"Prompt for {img_path} with path {txt_path} doesn't exist")
+            prompt_str, _ = self._get_prompt_str_and_len(prompt_obj)
+
+        tag_weight = 1.0
+        if "tag_weight" in prompt_obj:
+            tag_weight = float(prompt_obj.get("tag_weight", 1.0))
+
+        length = sum(
+            len(prompt_obj[k])
+            for k in ["prefix_tokens", "general_tokens", "suffix_tokens"]
+            if k in prompt_obj and isinstance(prompt_obj[k], list)
+        )
+
+        return prompt_str, length, tag_weight
 
     def encode_dataset(self) -> Dict:
         """Encodes samples into Parquet files with metadata index."""
@@ -104,27 +168,15 @@ class ImageStreamEncoder:
         for idx, (bucket_idx, orig_idx) in enumerate(self.dataset.index_mapping):
             bucket_idx = int(bucket_idx)
             orig_idx = int(orig_idx)
-            img_path = self.dataset.paths[orig_idx]
+            img_path = Path(self.dataset.paths[orig_idx])
 
-            prompt_obj = self.dataset._load_prompt(img_path, self.dataset.label_ext)
-            prompt_str, length = self._get_prompt_str_and_len(prompt_obj)
+            _, length, _ = self._read_prompt_and_weight(img_path)
 
             tier = self._determine_tier(length)
             grouped_samples[bucket_idx][tier].append(orig_idx)
 
-        total_samples = sum(
-            len(indices)
-            for b_groups in grouped_samples.values()
-            for indices in b_groups.values()
-        )
-        print(f"Encoding {total_samples} samples into Parquet shards...")
-
-        shard_counter = 0
-        sample_records = []
-        shard_metadata = []
-
-        pbar = tqdm(total=total_samples, desc="Processing Parquet Shards")
-
+        # Collect lightweight metadata descriptors without loading image bytes
+        flat_descriptors = []
         for bucket_idx in sorted(grouped_samples.keys()):
             res = tuple(map(int, self.dataset.bucket_resolutions[bucket_idx]))
             target_w, target_h = res
@@ -132,56 +184,76 @@ class ImageStreamEncoder:
             for tier in sorted(grouped_samples[bucket_idx].keys()):
                 indices = grouped_samples[bucket_idx][tier]
                 if len(indices) < self.min_sample_count:
-                    pbar.update(len(indices))
                     continue
 
                 for orig_idx in indices:
-                    img_path = self.dataset.paths[orig_idx]
-                    booru_id = self.dataset.get_image_id(orig_idx)
-
-                    with open(img_path, "rb") as f:
-                        img_bytes = f.read()
-
-                    prompt_obj = self.dataset._load_prompt(
-                        img_path, self.dataset.label_ext
+                    flat_descriptors.append(
+                        (orig_idx, bucket_idx, tier, target_w, target_h)
                     )
-                    prompt_str, _ = self._get_prompt_str_and_len(prompt_obj)
 
-                    orig_w, orig_h = map(int, self.dataset.raw_res[orig_idx])
-                    ar = float(orig_w / orig_h) if orig_h > 0 else 1.0
+        total_samples = len(flat_descriptors)
+        print(
+            f"Filtered {total_samples} valid samples. "
+            "Shuffling globally across all shards..."
+        )
 
-                    tag_weight = 1.0
-                    if isinstance(prompt_obj, dict) and "tag_weight" in prompt_obj:
-                        tag_weight = float(prompt_obj["tag_weight"])
+        rng = random.Random(self.seed)
+        rng.shuffle(flat_descriptors)
 
-                    record = {
-                        "booru_id": str(booru_id),
-                        "image": img_bytes,
-                        "prompt": prompt_str,
-                        "bucket_idx": int(bucket_idx),
-                        "target_width": target_w,
-                        "target_height": target_h,
-                        "original_width": orig_w,
-                        "original_height": orig_h,
-                        "aspect_ratio": ar,
-                        "tier": int(tier),
-                        "tag_weight": tag_weight,
-                    }
-                    sample_records.append(record)
-                    pbar.update(1)
+        print(f"Encoding {total_samples} samples into Parquet shards...")
+        shard_counter = 0
+        shard_metadata = []
+        pbar = tqdm(total=total_samples, desc="Processing Parquet Shards")
 
-                    if len(sample_records) >= self.samples_per_shard:
-                        shard_path = self._write_shard(sample_records, shard_counter)
-                        shard_metadata.append(
-                            {
-                                "shard_file": str(shard_path.name),
-                                "sample_count": len(sample_records),
-                            }
+        for start_idx in range(0, total_samples, self.samples_per_shard):
+            chunk_descriptors = flat_descriptors[
+                start_idx : start_idx + self.samples_per_shard
+            ]
+            sample_records = []
+
+            for (
+                orig_idx,
+                bucket_idx,
+                tier,
+                target_w,
+                target_h,
+            ) in chunk_descriptors:
+                img_path = Path(self.dataset.paths[orig_idx])
+                booru_id = str(self.dataset.get_image_id(orig_idx))
+
+                with open(img_path, "rb") as f:
+                    img_bytes = f.read()
+
+                prompt_str, _, tag_weight = self._read_prompt_and_weight(img_path)
+                orig_w, orig_h = map(int, self.dataset.raw_res[orig_idx])
+                ar = float(orig_w / orig_h) if orig_h > 0 else 1.0
+
+                aes_tier = -1
+                if self.aesthetic_df is not None:
+                    try:
+                        aes_tier = int(
+                            self.aesthetic_df.loc[booru_id, "final_tier_num"]
                         )
-                        sample_records = []
-                        shard_counter += 1
+                    except KeyError:
+                        aes_tier = -1
 
-        if sample_records:
+                record = {
+                    "booru_id": booru_id,
+                    "image": img_bytes,
+                    "prompt": prompt_str,
+                    "bucket_idx": bucket_idx,
+                    "target_width": target_w,
+                    "target_height": target_h,
+                    "original_width": orig_w,
+                    "original_height": orig_h,
+                    "aspect_ratio": ar,
+                    "tier": tier,
+                    "aesthetic_tier": aes_tier,
+                    "tag_weight": tag_weight,
+                }
+                sample_records.append(record)
+                pbar.update(1)
+
             shard_path = self._write_shard(sample_records, shard_counter)
             shard_metadata.append(
                 {
@@ -189,6 +261,7 @@ class ImageStreamEncoder:
                     "sample_count": len(sample_records),
                 }
             )
+            shard_counter += 1
 
         pbar.close()
 

@@ -366,6 +366,9 @@ class DataPipeline:
             label_ext=le_config["label_ext"],
             already_tokenized=le_config["already_tokenized"],
             df_tokens_path=None,  # Assuming not used in this flow
+            max_res_area=tuple(le_config.get("max_res_area", (768, 512))),
+            max_dim_limit=le_config.get("max_dim_limit", 1024),
+            base_res=tuple(le_config.get("base_res", (512, 512))),
         )
         print(f"Loaded {len(dataset)} samples for latent encoding.")
 
@@ -460,6 +463,9 @@ class DataPipeline:
             label_ext=le_config["label_ext"],
             already_tokenized=le_config["already_tokenized"],
             df_tokens_path=None,  # Assuming not used in this flow
+            max_res_area=tuple(le_config.get("max_res_area", (768, 512))),
+            max_dim_limit=le_config.get("max_dim_limit", 1024),
+            base_res=tuple(le_config.get("base_res", (512, 512))),
         )
         print(f"Loaded {len(dataset)} samples for latent encoding.")
 
@@ -701,6 +707,9 @@ class DataPipeline:
             root=self.config["download_dir"],
             label_ext=le_config["label_ext"],
             already_tokenized=le_config["already_tokenized"],
+            max_res_area=tuple(le_config.get("max_res_area", (768, 512))),
+            max_dim_limit=le_config.get("max_dim_limit", 1024),
+            base_res=tuple(le_config.get("base_res", (512, 512))),
         )
 
         tokenizer = CLIPTokenizer.from_pretrained(

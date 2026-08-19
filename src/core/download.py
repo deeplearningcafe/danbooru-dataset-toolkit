@@ -7,7 +7,7 @@ import time
 import threading
 from pathlib import Path
 from typing import List, Optional
-from ..utils.loader import IMAGE_SUFFIXES, build_id_path_map
+from ..utils.loader import IMAGE_SUFFIXES, build_id_path_map, AESTHETIC_LABEL
 
 HAS_CURL = False
 try:
@@ -104,18 +104,11 @@ class Downloader:
             print(f"Skipping row {index} due to invalid URL.")
             return None
 
-        quality2id = {
-            "masterpiece": 3,
-            "good_score": 2,
-            "bad_score": 1,
-            "worse_score": 0,
-        }
-
         # Determine class_id and create filename
         if "aesthetic_class" in row.index:
             class_id = row["aesthetic_class"]
         elif "quality_tier" in row.index:
-            class_id = quality2id.get(row["quality_tier"], 0)
+            class_id = AESTHETIC_LABEL.get(row["quality_tier"], 0)
         else:
             class_id = 0  # Default class
 

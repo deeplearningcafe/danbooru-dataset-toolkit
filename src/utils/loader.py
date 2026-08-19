@@ -11,6 +11,7 @@ import multiprocessing
 
 # Define image file extensions
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"}
+AESTHETIC_LABEL = {"worse_score": 0, "bad_score": 1, "good_score": 2, "masterpiece": 3}
 
 
 def load_all_parquets(

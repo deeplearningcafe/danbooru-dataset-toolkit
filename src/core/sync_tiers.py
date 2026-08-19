@@ -10,14 +10,7 @@ import shutil
 import pandas as pd
 from pathlib import Path
 from typing import Optional, List
-from ..utils.loader import build_id_path_map
-
-TIER_TO_FOLDER = {
-    "worse_score": "0",
-    "bad_score": "1",
-    "good_score": "2",
-    "masterpiece": "3",
-}
+from ..utils.loader import build_id_path_map, AESTHETIC_LABEL
 
 
 def sync_tiers_on_disk(
@@ -46,7 +39,7 @@ def sync_tiers_on_disk(
             continue
 
         target_tier_name = tier_map[img_id]
-        target_class_id = TIER_TO_FOLDER.get(target_tier_name, "1")
+        target_class_id = str(AESTHETIC_LABEL.get(target_tier_name, 1))
 
         # Determine target directory (preserve character folder if present)
         parent_dir = src_img_path.parent

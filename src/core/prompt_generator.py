@@ -58,12 +58,33 @@ class PromptGenerator:
             return ", ".join(tags)
         return ""
 
+    @staticmethod
+    def _extract_year(series: pd.Series) -> pd.Series:
+        """
+        Extracts 4-digit integer year from datetime, string, or numeric Series.
+        Handles mixed formats (e.g. ISO-8601 strings with partial TZ offsets).
+        """
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return series.dt.year.astype("Int64")
+
+        # Vectorized extraction of the leading 4-digit year
+        extracted = series.astype(str).str.extract(r"^\s*(\d{4})", expand=False)
+        years = pd.to_numeric(extracted, errors="coerce").astype("Int64")
+        invalid_mask = (years < 1900) | (years > 2100)
+        years[invalid_mask] = pd.NA
+        return years
+
     def _format_year(self, year: Optional[int]) -> str:
         """
         Maps a 4-digit year to its NovelAI era tag and year modifier.
         Returns an empty string if year is None or invalid.
         """
-        if year is None:
+        if year is None or pd.isna(year):
+            return ""
+
+        try:
+            year = int(year)
+        except (ValueError, TypeError):
             return ""
 
         if year <= 2017:
@@ -99,6 +120,7 @@ class PromptGenerator:
         columns_to_keep = [
             "id",
             "created_at",
+            "year",
             "relative_path",
             "tag_string_general",
             "tag_string_character",
@@ -270,6 +292,7 @@ class PromptGenerator:
         columns_to_keep = [
             "id",
             "created_at",
+            "year",
             "relative_path",
             "tag_string_general",
             "tag_string_character",
@@ -887,13 +910,11 @@ class PromptGenerator:
         print(f"Creating prompt files in '{output_dir}'...")
         os.makedirs(output_dir, exist_ok=True)
 
-        # Pre-calculate year for efficiency
+        # Pre-calculate year cleanly using vectorized regex
         if "created_at" in df.columns:
-            df["year"] = pd.to_datetime(
-                df["created_at"], utc=True, errors="coerce"
-            ).dt.year.astype("Int64")
+            df["year"] = self._extract_year(df["created_at"])
         elif "year" in df.columns:
-            df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
+            df["year"] = self._extract_year(df["year"])
         else:
             df["year"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
 

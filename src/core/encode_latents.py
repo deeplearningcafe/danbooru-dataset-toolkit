@@ -17,7 +17,7 @@ from collections import defaultdict
 import math
 import gc  # For garbage collection if needed
 import pandas as pd
-from ..utils.loader import parallel_scan_images, resolve_image_path
+from ..utils.loader import parallel_scan_images, resolve_image_path, AESTHETIC_LABEL
 
 import sys
 
@@ -45,7 +45,6 @@ from vae import Vae, VaeConfig
 
 # Define type hints for clarity
 Resolution = Tuple[int, int]
-AESTHETIC_LABEL = {"worse_score": 0, "bad_score": 1, "good_score": 2, "masterpiece": 3}
 
 
 def process_image(

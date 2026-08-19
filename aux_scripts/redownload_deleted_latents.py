@@ -10,7 +10,7 @@ from src.core.download import Downloader
 from src.core.prompt_generator import PromptGenerator
 from src.prompts.prompt_utils import format_danbooru_tag_inverse
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"}
 
 
 def scan_directory_for_images(dir_path: str) -> set:
