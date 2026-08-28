@@ -67,6 +67,7 @@ class ImageStreamEncoder:
                 self.aesthetic_df["final_tier_num"] = self.aesthetic_df[
                     "final_tier"
                 ].apply(get_tier_num)
+                print(f"Loaded aesthetic df with {len(self.aesthetic_df)} samples")
             except Exception as e:
                 print(f"Warning: Failed to load aesthetic CSV: {e}")
 

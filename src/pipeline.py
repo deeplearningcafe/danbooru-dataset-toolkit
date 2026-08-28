@@ -728,6 +728,7 @@ class DataPipeline:
             samples_per_shard=le_config["samples_per_shard"],
             length_tiers=le_config["length_tiers"],
             min_sample_count=le_config["min_sample_count"],
+            aesthetic_csv_path=self.config["prompts"]["final_tiers_csv"],
         )
 
         encoder.encode_dataset()
